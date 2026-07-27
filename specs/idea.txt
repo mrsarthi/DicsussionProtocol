@@ -1,0 +1,6 @@
+1. ZK Metadata-Private Sync
+2. ZK Rate-Limiting Anti-Spam
+3. Low-Bandwidth Off-Grid Partition Reconciliation
+4. Cross-Version Schema Migration for Local-First CRDTs
+5. Asynchronous Key Revocation in Offline Networks
+6. Zero-Server WebRTC NAT Traversal
