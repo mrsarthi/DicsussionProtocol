@@ -8,7 +8,7 @@
 ---
 
 ## 1. Overview
-This specification defines the local-first state management, conflict-free data synchronization, and schema version migration layers. Application state is split across independent **Automerge CRDT documents** (Multi-Doc Granularity). Peers reconcile state differences efficiently using a **Shallow Merkle State Tree**, and handle protocol schema version mismatches using declarative **Simple JSON Schema Lenses**.
+This specification defines the local-first state management, conflict-free data synchronization, and schema version migration layers. Application state MUST be split across independent **Automerge CRDT documents** (Multi-Doc Granularity) and persisted through **Gun.js** as the local-first graph store. Gun.js provides storage and delta propagation, while Automerge provides deterministic CRDT merge semantics. Peers reconcile state differences efficiently using a **Shallow Merkle State Tree** over the canonical document set, and handle protocol schema version mismatches using declarative **Simple JSON Schema Lenses**.
 
 ---
 
@@ -77,8 +77,22 @@ Node A (Mobile)                                          Node B (Peer)
   │────── 4. SendSubBranches { hashes: [...] } ───────────────►│ (Pinpoints differing doc_id)
   │                                                            │
   │◄───── 5. RequestCRDTDelta { doc_id, have_heads } ──────────│
-  │                                                            │
   │────── 6. SendCRDTDelta { doc_id, binary_changes } ────────►│ (Applies Automerge merge)
+  │                                                            │
+  │────── 7. Gun.js Delta Sync { namespace, seq } ─────────────►│ (Persists the merged state locally)
+
+### 4.3 Canonical State Fields & Quota Awareness
+The Merkle root MUST be computed only after the Automerge document and any canonically tracked counters have been merged. The canonical state payload for each document MUST include the following fields:
+- `doc_id`
+- `head_hash`
+- `epoch`
+- `message_count`
+- `quota_window_id`
+- `message_index`
+
+The `message_index` and quota-window state MUST be included in the canonical document state so that peers can detect quota drift after partitions. The Merkle root MUST be recomputed from the merged state, not from a stale snapshot that predates the last local merge.
+
+The Shallow Merkle State Tree is the authoritative reconciliation protocol. Gun.js delta sync operates only as the persistence and propagation layer for the already-merged Automerge state. If a conflict arises between the Merkle root comparison and a Gun.js-received delta, the Merkle root and canonical document state take precedence. Nodes MUST NOT initiate separate merge loops that ignore the Merkle root.
 
 ---
 
@@ -112,6 +126,7 @@ Lenses are defined as declarative JSON transformation pipelines:
 | `AutomergeMergeConflict` | Concurrent offline edits to same field. | Automerge deterministic CRDT engine resolves value automatically; no runtime crash. |
 | `UnknownSchemaVersion` | Peer receives doc with no valid Lens path. | Reject document delta; send `Err: LensNotFound`; prompt user to update app software. |
 | `CorruptCRDTDelta` | Binary change bytes fail signature or checksum. | Discard delta; log security alert; fall back to full document snapshot fetch. |
+| `QuotaStateMismatch` | A peer observes divergent `message_index` or quota-window counters after a merge. | Reject the conflicting delta, recompute the canonical Merkle root, and force a full state resync for the affected document. |
 
 ---
 

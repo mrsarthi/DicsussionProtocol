@@ -8,7 +8,7 @@
 ---
 
 ## 1. Overview
-This specification defines the transport, peer discovery, and networking foundation for the protocol. All communication between nodes MUST occur over encrypted, peer-to-peer QUIC streams using key-based addressing (`did:key`) rather than IP addresses. Nodes must automatically discover local network peers via mDNS and punch through complex NAT boundaries globally using Iroh. If direct STUN hole-punching fails, nodes fallback to an encrypted relay server hosted on Render.
+This specification defines the transport, peer discovery, and networking foundation for the protocol. All communication between nodes MUST occur over encrypted, peer-to-peer QUIC streams using key-based addressing (`did:key`) rather than IP addresses. Nodes MUST automatically discover local network peers via mDNS and punch through complex NAT boundaries globally using Iroh. If direct STUN hole-punching fails, nodes MUST fall back to an ordered set of encrypted relay endpoints, with primary and backup hosts configured by the client so the mesh remains available even if one relay is unavailable or sleeping.
 
 ---
 
@@ -39,7 +39,7 @@ For out-of-band peer pairing, nodes MUST be able to serialize their endpoint inf
         pub relay_url: Option<String>,      // Render Fallback Relay: "https://<app>-relay.onrender.com"
     }
 
-### 3.4 Wire Frame Header Structure
+### 3.4 Wire Frame Header Structure & Parser Bounds
 Every raw frame sent across a transport sub-stream MUST be prefixed with a fixed 12-byte binary header:
 
 | Offset (Bytes) | Field Name | Type | Description |
@@ -49,6 +49,10 @@ Every raw frame sent across a transport sub-stream MUST be prefixed with a fixed
 | 3 | `flags` | `u8` | Bit flags (`0x01` Compressed via LZ4, `0x02` Priority) |
 | 4..7 | `payload_len` | `u32` | Big-endian length of the following payload bytes |
 | 8..11 | `checksum` | `u32` | CRC32-C checksum of the payload bytes |
+
+#### Wire Memory Safety & Decompression Limits:
+- **Zero-Copy View Extraction:** Wire parsers MUST instantiate payload buffers using exact byte-offsets (e.g., `frame.subarray()`) rather than re-allocating or slicing raw buffers to prevent `ArrayBuffer` boundary overruns.
+- **LZ4 Decompression Limit:** If bit flag `0x01` (LZ4 compressed) is set, parsers MUST enforce a strict **1 MB (1,048,576 bytes)** decompression ceiling prior to memory allocation to prevent algorithmic compression bombs.
 
 ---
 
@@ -97,11 +101,12 @@ Nodes MUST execute discovery and connection establishment across two distinct ti
    - `port`: Local listening UDP port.
    - `ver`: Protocol version (`1`).
 
-### 4.2 Global NAT Traversal & Render Relay Fallback
+### 4.2 Global NAT Traversal & Relay Fallback
 1. **Direct Hole Punching:** Nodes exchange endpoint candidates (public IP/port tuples derived via STUN) and execute simultaneous UDP hole-punching via `iroh-net`.
-2. **Render Relay Fallback:** If symmetric NAT or restrictive firewalls prevent direct UDP connections within **3000ms**, traffic falls back to a self-hosted relay daemon deployed on Render (`https://<app>-relay.onrender.com`).
-   - The Render relay operates over **WSS / HTTPS (Port 443)** to guarantee traversal through strict firewalls.
-   - The relay is **zero-knowledge**: it only forwards end-to-end encrypted packet streams and CANNOT decrypt or view payload contents.
+2. **Relay Failover:** Nodes MUST support an ordered relay chain (`primary`, `fallback`, and optional additional relays) configured via `relayEndpoints`. If symmetric NAT or restrictive firewalls prevent direct UDP connections within **3000ms**, traffic MUST fail over to the next configured relay endpoint.
+   - Relay transport operates over **WSS / HTTPS (Port 443)** to guarantee traversal through strict firewalls.
+   - Relays are **zero-knowledge**: they only forward end-to-end encrypted packet streams and CANNOT decrypt or view payload contents.
+   - If the primary relay is unavailable, nodes MUST retry using the backup relay without requiring a full application restart.
 
 ---
 
@@ -122,7 +127,8 @@ Node A (Initiator)                                        Node B (Responder)
 
 ### Handshake Constraints:
 1. **Clock Skew Verification:** Node B compares `timestamp` to its system clock. If the delta exceeds **30 seconds**, Node B MUST terminate the connection with `Err: ClockSkewTooHigh`.
-2. **Replay Protection:** `nonce_a` and `nonce_b` must be 32 cryptographically secure random bytes. Nodes track recent nonces in memory for 300 seconds to prevent replay attacks.
+2. **Replay Protection:** `nonce_a` and `nonce_b` MUST be 32 cryptographically secure random bytes. Nodes MUST track nonces keyed by the handshake timestamp and MUST reject any handshake whose age exceeds **300 seconds**. The replay window MUST be bound to the handshake timestamp rather than a sliding timer so a stale handshake cannot be replayed after the initial window expires.
+3. **Handshake Freshness:** Handshake messages MUST complete within **5000ms**; otherwise the initiator or responder MUST abort with `Err: HandshakeTimeout`.
 
 ---
 
@@ -144,7 +150,11 @@ Once the base encrypted connection is established (either direct or via Render r
 | `HolePunchTimeout` | Direct NAT traversal fails to resolve in 3000ms. | Seamlessly transition transport route to the Render fallback relay endpoint. |
 | `RenderRelayUnavailable` | Fallback relay on Render unreachable or sleeping. | Retry connection with exponential backoff; prompt user to verify internet connection. |
 | `ChecksumMismatch` | CRC32-C verification fails on incoming frame. | Drop corrupt frame; send `0xFF` frame retransmit request. |
+| `DecompressionBomb` | LZ4 payload exceeds 1 MB decompressed limit. | Terminate stream connection immediately; issue security log alert. |
+| `BufferOverrun` | Payload offset extends past `ArrayBuffer` bound. | Drop frame immediately; reject stream parser state. |
 | `UnknownStreamType` | Sub-protocol ID not in `[0x01, 0x02, 0x03]`. | Silently drop frame; log unknown protocol attempt. |
+| `HandshakeTimeout` | Handshake did not complete within 5000ms. | Abort connection attempt and retry with exponential backoff. |
+| `ReplayRejected` | Nonce or timestamp indicates a replayed or expired handshake. | Reject the stale handshake and log a security warning. |
 
 ---
 
@@ -155,4 +165,4 @@ Once the base encrypted connection is established (either direct or via Render r
 - [ ] Integration test confirms direct connection via Iroh hole-punching behind simulated Cone NAT.
 - [ ] Integration test verifies automatic failover to the Render relay endpoint when direct UDP hole-punching fails.
 - [ ] Test verifies that clock skew exceeding 30s rejects handshake initialization.
-- [ ] Frame parser correctly validates CRC32-C checksums and handles corrupt frame drop logic.
+- [ ] Frame parser correctly validates CRC32-C checksums, enforces zero-copy offset safety, and rejects LZ4 compressed payloads exceeding 1 MB.
