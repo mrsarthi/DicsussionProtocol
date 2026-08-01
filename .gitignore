@@ -1,1 +1,6 @@
-/citations
+/.agents
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.tsbuildinfo

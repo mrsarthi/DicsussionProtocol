@@ -8,7 +8,7 @@
 ---
 
 ## 1. Overview
-This specification defines the local-first state management, conflict-free data synchronization, and schema version migration layers. Application state MUST be split across independent **Automerge CRDT documents** (Multi-Doc Granularity) and persisted through **Gun.js** as the local-first graph store. Gun.js provides storage and delta propagation, while Automerge provides deterministic CRDT merge semantics. Peers reconcile state differences efficiently using a **Shallow Merkle State Tree** over the canonical document set, and handle protocol schema version mismatches using declarative **Simple JSON Schema Lenses**.
+This specification defines the local-first state management, conflict-free data synchronization, and schema version migration layers. Application state MUST be split across independent **Automerge CRDT documents** (Multi-Doc Granularity) and persisted locally via **SQLite** on desktop and **IndexedDB** in browser contexts. Binary delta propagation is handled directly by **Automerge over Iroh QUIC streams**. Peers reconcile state differences efficiently using a **Bounded Sparse Merkle Tree** over the canonical document set, and handle protocol schema version mismatches using declarative **Simple JSON Schema Lenses**.
 
 ---
 
@@ -36,50 +36,49 @@ Every document MUST conform to a registered schema structure:
       "messages": {
         "msg-uuid-1": {
           "id": "msg-uuid-1",
-          "author_did": "did:key:z6M...",
+          "author_did": null,
+          "nullifier_hash": "poseidon-hash",
           "content": "Hello P2P world",
           "timestamp": 1785148100,
+          "zk_proof": "base64-serialized-groth16-proof",
+          "rln_nullifier": "base64-serialized-nullifier",
           "zk_envelope_ref": "hash-of-rln-proof"
         }
       }
     }
 
+`author_did` MAY be `null` when `nullifier_hash` is present for anonymous RLN channels. Received messages MUST persist the serialized Groth16 proof (`zk_proof`) and RLN nullifier (`rln_nullifier`) locally for offline dispute resolution.
+
 ---
 
-## 4. Shallow Merkle State Sync Protocol
+## 4. Bounded Sparse Merkle State Sync Protocol
 
-To minimize mobile battery drain and cellular bandwidth, peers compare a single **Document-Level Merkle Root Hash** before transferring full CRDT change histories.
+To minimize mobile battery drain and cellular bandwidth, peers compare a single **Document-Level Sparse Merkle Root Hash** before transferring full CRDT change histories.
 
 ### 4.1 Tree Construction
 1. Each document's current state is represented by its 32-byte Automerge Head Hash (`head_hash`).
-2. Documents are sorted deterministically by `doc_id`.
-3. A binary Merkle Tree is constructed where each leaf node is `BLAKE3(doc_id || head_hash)`.
-
-                     [ Root State Hash: 0xA1B2... ]
-                              /          \
-                             /            \
-                  [ Branch Hash L ]     [ Branch Hash R ]
-                     /       \             /        \
-                 Doc 1       Doc 2     Doc 3        Doc 4
+2. Active identity commitments are collected, sorted lexicographically, and mapped to a bounded sparse tree index $\text{Index}(cm_x) = \text{Rank}(cm_x \in \text{Sorted}(cm_1, cm_2, \dots))$.
+3. The tree is a **Bounded Sparse Merkle Tree** of depth $D = 16$ with Poseidon path elements and a maximum active commitment set size $N_{\text{max}} = 65{,}536$.
+4. When $N = 65{,}536$, nodes MUST evict the oldest inactive commitment using an LRU frame and replace it with a tombstone leaf $cm_{\text{empty}} = 0$.
+5. Poseidon hashing is used for path elements and the resulting root is the canonical state root for the document set.
 
 ### 4.2 Sync Sequence (Sub-Stream `0x01`)
 
 Node A (Mobile)                                          Node B (Peer)
   │                                                            │
-  │────── 1. MerkleRootSync { root_hash: 0xA1B2... } ─────────►│
+  │────── 1. SparseMerkleRootSync { root_hash: 0xA1B2... } ───►│
   │                                                            │ (Compares roots)
   │◄───── 2. RootMatch: TRUE (Sync Complete - 0 Bytes) ────────│ (If hashes match)
   │                                                            │
   │   --- IF HASHES DIFFER ---                                 │
+  │◄───── 3. GetSparseSubtree { path: [0] } ───────────────────│ (Requests differing branch)
   │                                                            │
-  │◄───── 3. GetSubBranches { path: [0] } ────────────────────│ (Requests differing branch)
-  │                                                            │
-  │────── 4. SendSubBranches { hashes: [...] } ───────────────►│ (Pinpoints differing doc_id)
+  │────── 4. SendSparseSubtree { hashes: [...] } ─────────────►│ (Pinpoints differing commitment)
   │                                                            │
   │◄───── 5. RequestCRDTDelta { doc_id, have_heads } ──────────│
   │────── 6. SendCRDTDelta { doc_id, binary_changes } ────────►│ (Applies Automerge merge)
   │                                                            │
-  │────── 7. Gun.js Delta Sync { namespace, seq } ─────────────►│ (Persists the merged state locally)
+  │────── 7. PersistLocalState { storage: SQLite|IndexedDB } ─►│ (Persists the merged state locally)
 
 ### 4.3 Canonical State Fields & Quota Awareness
 The Merkle root MUST be computed only after the Automerge document and any canonically tracked counters have been merged. The canonical state payload for each document MUST include the following fields:
@@ -92,7 +91,13 @@ The Merkle root MUST be computed only after the Automerge document and any canon
 
 The `message_index` and quota-window state MUST be included in the canonical document state so that peers can detect quota drift after partitions. The Merkle root MUST be recomputed from the merged state, not from a stale snapshot that predates the last local merge.
 
-The Shallow Merkle State Tree is the authoritative reconciliation protocol. Gun.js delta sync operates only as the persistence and propagation layer for the already-merged Automerge state. If a conflict arises between the Merkle root comparison and a Gun.js-received delta, the Merkle root and canonical document state take precedence. Nodes MUST NOT initiate separate merge loops that ignore the Merkle root.
+The bounded sparse Merkle tree is the authoritative reconciliation protocol. Local SQLite or IndexedDB persistence is only the storage layer for the already-merged Automerge state. If a conflict arises between the Merkle root comparison and a persisted local delta, the Merkle root and canonical document state take precedence. Nodes MUST NOT initiate separate merge loops that ignore the Merkle root.
+
+### 4.4 Automerge Snapshotting & State Pruning Policy
+To prevent unbounded CRDT history bloat over extended chat operation:
+1. **Periodic Checkpointing:** Every 1,000 document changes or 7 days, nodes MUST generate a compressed binary snapshot of the active Automerge document state (`automerge.save()`).
+2. **Delta Pruning:** Local stores MAY discard raw historical change deltas older than the latest canonical snapshot, retaining only the head state hash and active leaf nodes for state reconciliation.
+3. **Channel Archival:** Inactive channels (no messages exchanged within 30 days) are evicted from the active Merkle state tree into content-addressed blob storage on Iroh, releasing hot SQLite/IndexedDB memory paths.
 
 ---
 

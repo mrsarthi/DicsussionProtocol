@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-This specification defines the Headless Backend Engine and Client SDK (`@dicsussion/sdk`) that acts as the primary orchestrator facade for the Dicsussion application. It encapsulates decentralized graph storage driven by Gun.js, Electron IPC process isolation, local Web-of-Trust (WoT) score calculations, and native C++ and Python bindings for the ZekPoc (Zero Knowledge Proof of Chat) cryptographic protocol. 
+This specification defines the Headless Backend Engine and Client SDK (`@dicsussion/sdk`) that acts as the primary orchestrator facade for the Dicsussion application. It encapsulates local persistence in SQLite or IndexedDB, Electron IPC process isolation, local Web-of-Trust (WoT) score calculations, and a persistent Web Worker pool for the ZekPoc (Zero Knowledge Proof of Chat) cryptographic protocol.
 
 Application frontends import this SDK as a single library to access chat, group, identity, and zero-knowledge reputation features without directly managing low-level graph sockets or process executions.
 
@@ -24,7 +24,7 @@ Application frontends import this SDK as a single library to access chat, group,
 
 ## 3. Runtime Architecture & Process Isolation
 
-To guarantee 60 FPS UI performance on desktop environments, the SDK completely isolates heavy cryptographic calculations and Gun.js storage routines from the main rendering process using Electron IPC channels.
+To guarantee 60 FPS UI performance on desktop environments, the SDK completely isolates heavy cryptographic calculations and local persistence routines from the main rendering process using Electron IPC channels.
 
 ### 3.1 Multi-Process Execution Topology
 
@@ -38,41 +38,41 @@ To guarantee 60 FPS UI performance on desktop environments, the SDK completely i
 │                    NODE.JS BACKGROUND PROCESS (Core)                   │
 │  • P2P Transport Orchestration                                         │
 │  • Local Web-of-Trust Score Calculator                                 │
-│  • Persistent Worker Pool for Proof Generation                        │
+│  • Persistent Web Worker Pool for Proof Generation                    │
 └───────────────┬────────────────────────────────────────┬───────────────┘
                 │                                        │
                 ▼                                        ▼
 ┌───────────────────────────────┐        ┌───────────────────────────────┐
-│  GUN.JS DECENTRALIZED GRAPH   │        │ NATIVE ZEKPOC BINDINGS (C++)  │
+│  SQLITE / INDEXEDDB STORE     │        │ WEB WORKER POOL (BACKGROUND) │
 │ • Local Node Persistence      │        │ • Persistent worker pool     │
-│ • P2P State Synchronization   │        │ • Timeout-safe proof gen     │
+│ • Automerge State Sync        │        │ • Timeout-safe proof gen     │
 │ • Encrypted Key Vault         │        │ • Crash recovery / health    │
 └───────────────────────────────┘        └───────────────────────────────┘
 ```
 
 ---
 
-## 4. Decentralized Graph Storage (Gun.js)
+## 4. Local Persistence & State Storage
 
-The SDK utilizes **Gun.js** as its decentralized, local-first graph storage engine. Nodes persist state locally and continuously synchronize delta graphs across mesh peers.
+The SDK utilizes **SQLite** for desktop contexts and **IndexedDB** for browser contexts as the local-first persistence layer. Nodes persist state locally and synchronize Automerge deltas directly over Iroh QUIC streams.
 
-### 4.1 Schema Node Layout
+### 4.1 Storage Layout
 
-The Gun.js graph root is partitioned into five main document namespaces:
+The local store is partitioned into logical collections:
 
-1. **`~user/identity`**: Holds local keypairs (Ed25519, X25519), ZekPoc identity secrets, and encrypted mnemonic backups.
-2. **`~wot/peers`**: Maps peer `did:key` identifiers to interaction counters, verified chat histories, and computed subjective trust scores.
-3. **`~vouchers/redeemed`**: Tracks blind endorsement voucher tokens (`+5 POC` gifts) and redemption nullifiers to prevent double-spending.
-4. **`~channels/meta`**: Stores metadata, peer lists, and access control thresholds for active chat channels.
-5. **`~messages/stream`**: Real-time distributed stream containing end-to-end encrypted message payloads.
+1. **`identity`**: Holds local keypairs (Ed25519, X25519), ZekPoc identity secrets, and encrypted mnemonic backups.
+2. **`wot_peers`**: Maps peer `did:key` identifiers to interaction counters, verified chat histories, and computed subjective trust scores.
+3. **`voucher_redeemed`**: Tracks blind endorsement voucher tokens (`+5 POC` gifts) and redemption nullifiers to prevent double-spending.
+4. **`channel_meta`**: Stores metadata, peer lists, and access control thresholds for active chat channels.
+5. **`message_stream`**: Stores end-to-end encrypted message payloads and their proof metadata.
 
 ---
 
-## 5. ZekPoc Cryptographic Native Bindings
+## 5. ZekPoc Cryptographic Web Worker Pool
 
-Because ZekPoc zero-knowledge proofs require significant processing power, the SDK offloads cryptographic proof generation to native C++ modules and spawned Python worker scripts inside the background Node process.
+Because ZekPoc zero-knowledge proofs require significant processing power, the SDK offloads cryptographic proof generation and verification to a persistent Web Worker pool inside dedicated background processes.
 
-### 5.1 Native Bridge Interface
+### 5.1 Worker Bridge Interface
 
 ```typescript
 export interface ZekPocProofInput {
@@ -110,13 +110,15 @@ The WoT engine calculates subjective peer trust scores entirely locally without 
 
 The local score $S(P)$ for peer $P$ is calculated as:
 
-$$S(P) = S_{\text{base}} + (10 \cdot C_{\text{verified}}) + (5 \cdot V_{\text{valid}}) - (100 \cdot B_{\text{malpractice}})$$
+$$S(P) = S_{\text{base}} + (10 \cdot C_{\text{verified}}) + (5 \cdot V_{\text{valid}}) - (2 \cdot I_{\text{issued}})$$
 
 Where:
 * $S_{\text{base}} = 0$ (Default baseline score for unverified contacts).
 * $C_{\text{verified}}$ = Number of verified bidirectional chat sessions completed ($+10$ points each).
 * $V_{\text{valid}}$ = Number of unblinded $+5$ Endorsement Vouchers redeemed ($+5$ points each).
-* $B_{\text{malpractice}}$ = Binary flag ($1$ if peer has been slashed or blacklisted, deducting $100$ points).
+* $I_{\text{issued}}$ = Number of endorsement vouchers issued by peer $P$ (deducting $2$ POC per issued voucher to prevent voucher farming).
+
+Identities that produce double-spending RLN nullifiers are immediately blacklisted locally ($S(P) \to -\infty$), and their revoked status is gossiped across the network via Revocation Tombstones on sub-stream `0x03`.
 
 ### 6.2 Definition of a Verified Bidirectional Chat Session
 A `verified bidirectional chat session` is a session that satisfies all of the following conditions:
@@ -132,16 +134,15 @@ Only sessions that satisfy this definition contribute to $C_{\text{verified}}$.
 
 ## 7. Public Client SDK Surface (`DicsussionClient`)
 
-The developer interface exposed by `@dicsussion/sdk` hides complex IPC calls and C++ execution behind clean TypeScript namespaces.
+The developer interface exposed by `@dicsussion/sdk` hides complex IPC calls and worker execution behind clean TypeScript namespaces.
 
 ### 7.1 SDK Initialization & Main Facade
 
 ```typescript
 export interface ClientConfig {
-  gunPeers?: string[];
   storagePath?: string;
   relayEndpoints?: string[];
-  proofBackend?: 'wasm' | 'cpp' | 'python';
+  proofBackend?: 'wasm' | 'browser';
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
   proofTimeoutMs?: number;
   autoReconnect?: boolean;
@@ -176,11 +177,11 @@ export class DicsussionClient {
   }
 
   async disconnect(): Promise<void> {
-    // Unsubscribe listeners, flush outbox, disconnect Gun.js peers, reset worker pool
+    // Unsubscribe listeners, flush outbox, disconnect Iroh peers, reset worker pool
   }
 
   private async bootstrapInternalEngine(): Promise<void> {
-    // Initializes Electron IPC bridge & connects to local Gun.js graph
+    // Initializes Electron IPC bridge & connects to local SQLite/IndexedDB persistence
   }
 }
 ```
@@ -197,20 +198,22 @@ export interface SendMessageOptions {
 export interface ChatMessage {
   id: string;
   channelId: string;
-  authorDid: string;
+  authorDid?: string;
+  nullifierHash?: string;
   content: string;
   timestamp: number;
   verifiedTier: number;
   proofEpoch: number;
   proofValid: boolean;
   envelopeRef: string;
+  zkProof?: string;
 }
 
 export class ChatService {
   static readonly MAX_LISTENERS_PER_CHANNEL = 64;
 
   async sendMessage(options: SendMessageOptions): Promise<ChatMessage> {
-    // Sends content over Gun.js with attached ZekPoc proof; if the peer is offline, the message is queued in the outbox until the next reconnect
+    // Sends content over Iroh QUIC streams with attached ZekPoc proof; if the peer is offline, the message is queued in the outbox until the next reconnect
     return {} as ChatMessage;
   }
 
@@ -297,8 +300,8 @@ export interface OutboxEntry {
 }
 ```
 
-### 7.5 Gun.js Voucher Record Schema
-The `~vouchers/redeemed` namespace MUST store a concrete voucher record schema so redeemed vouchers can be deduplicated and garbage-collected safely.
+### 7.5 Voucher Record Schema
+The local voucher store MUST persist a concrete voucher record schema so redeemed vouchers can be deduplicated and garbage-collected safely.
 
 ```typescript
 export interface VoucherRecord {
@@ -316,7 +319,7 @@ export interface VoucherRecord {
 ## 8. Acceptance Criteria
 
 - [ ] `@dicsussion/sdk` initializes cleanly over Electron IPC without blocking the UI renderer thread.
-- [ ] Gun.js graph database stores, retrieves, and syncs chat node deltas locally and across P2P peers.
-- [ ] Native C++ and Python bindings generate valid ZekPoc proofs without crashing the background process.
+- [ ] SQLite/IndexedDB persistence stores, retrieves, and syncs Automerge deltas locally and across P2P peers.
+- [ ] Persistent Web Worker pools generate and verify ZekPoc proofs without crashing the background process.
 - [ ] Base trust score for all unverified contacts accurately defaults to $S_{\text{base}} = 0$.
-- [ ] End-to-end integration tests verify `client.chat.sendMessage()` executes native witness generation, encrypts payloads, and syncs via Gun.js.
+- [ ] End-to-end integration tests verify `client.chat.sendMessage()` executes worker witness generation, encrypts payloads, and syncs via Iroh QUIC/Automerge.

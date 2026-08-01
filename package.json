@@ -1,0 +1,19 @@
+{
+  "name": "@dicsussion/protocol",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Headless, local-first, zero-knowledge P2P messaging protocol engine and SDK",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}
