@@ -1,7 +1,10 @@
 /**
  * @dicsussion/wot
  *
- * Local Web-of-Trust score calculations (S_i(P) formula),
- * Identifiable Blind Voucher issuance and redemption state.
+ * Public API surface for the Web-of-Trust module.
  */
-export {};
+
+export type { PeerTrustProfile } from './types.js';
+export { TIER_QUOTA, TIER_THRESHOLDS, TrustTier } from './types.js';
+
+export { buildProfile, calculateScore, scoreTier } from './score-calculator.js';

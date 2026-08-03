@@ -4,3 +4,8 @@ dist/
 test-results/
 playwright-report/
 *.tsbuildinfo
+
+# SQLite artifacts left behind by tests
+*.db
+*.db-wal
+*.db-shm

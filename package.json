@@ -12,8 +12,18 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.0",
+    "@types/uuid": "^10.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@automerge/automerge": "^3.4.0",
+    "@noble/curves": "^2.2.0",
+    "better-sqlite3": "^13.0.2",
+    "crc-32": "^1.2.2",
+    "multiformats": "^14.0.5",
+    "uuid": "^14.0.1"
   }
 }

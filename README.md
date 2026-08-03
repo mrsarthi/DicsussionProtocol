@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178c6.svg)](https://www.typescriptlang.org/)
 [![Rust](https://img.shields.io/badge/Rust-iroh--net-orange.svg)](https://iroh.computer/)
-[![Status](https://img.shields.io/badge/Status-Active_Development-yellow.svg)](#development-status)
+
 
 </div>
 
@@ -195,20 +195,6 @@ npx tsc --noEmit
 
 ---
 
-## Development Status
-
-The project is under active development following a three-phase roadmap:
-
-| Phase | Focus | Status |
-|---|---|---|
-| **Phase 1** | Core P2P mesh, E2EE messaging, Automerge CRDT sync | 🔨 In Progress |
-| **Phase 2** | Web-of-Trust, Sparse Merkle Tree, blind voucher exchange | ⏳ Planned |
-| **Phase 3** | ZK proving engine, Circom circuits, RLN slashing pipeline | ⏳ Planned |
-
-See [PROGRESS.md](PROGRESS.md) for detailed task-level progress.
-
----
-
 ## SDK Preview
 
 ```typescript
@@ -265,15 +251,6 @@ Six multiplexed sub-streams over a single QUIC connection:
 | `0x05` | RLN Broadcast | Rate-limiting nullifier signal propagation |
 | `0x06` | Share Exchange | RLN polynomial share gossip for transitive slashing |
 
----
-
-## Contributing
-
-This project is in early active development. Contributions, feedback, and protocol review are welcome.
-
-1. Read the [RFC specifications](specs/) to understand the protocol design
-2. Check [PROGRESS.md](PROGRESS.md) for current task status
-3. Open an issue to discuss changes before submitting PRs
 
 ---
 
