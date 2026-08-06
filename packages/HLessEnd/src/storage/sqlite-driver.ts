@@ -7,6 +7,11 @@
 
 import Database from 'better-sqlite3';
 
+import {
+  deserializeRecord,
+  getPrimaryKeyColumn,
+  serializeValue,
+} from './driver-shared.js';
 import { runMigrations } from './migrations.js';
 import type { IStorageDriver } from './types.js';
 
@@ -48,7 +53,7 @@ export class SQLiteDriver implements IStorageDriver {
       ON CONFLICT DO UPDATE SET ${updates}
     `;
 
-    this.db!.prepare(sql).run(...columns.map((c) => serializeValue(value[c])));
+    this.db!.prepare(sql).run(...columns.map((c) => bindable(value[c])));
   }
 
   async get(
@@ -60,9 +65,11 @@ export class SQLiteDriver implements IStorageDriver {
     // Determine primary key column by collection
     const pkColumn = getPrimaryKeyColumn(collection);
     const sql = `SELECT * FROM ${collection} WHERE ${pkColumn} = ?`;
-    const row = this.db!.prepare(sql).get(key) as Record<string, unknown> | undefined;
+    const row = this.db!.prepare(sql).get(key) as
+      | Record<string, unknown>
+      | undefined;
 
-    return row ?? undefined;
+    return row ? deserializeRecord(row) : undefined;
   }
 
   async delete(collection: string, key: string): Promise<boolean> {
@@ -71,6 +78,7 @@ export class SQLiteDriver implements IStorageDriver {
     const pkColumn = getPrimaryKeyColumn(collection);
     const sql = `DELETE FROM ${collection} WHERE ${pkColumn} = ?`;
     const result = this.db!.prepare(sql).run(key);
+
     return result.changes > 0;
   }
 
@@ -86,7 +94,7 @@ export class SQLiteDriver implements IStorageDriver {
 
     if (filter && Object.keys(filter).length > 0) {
       const conditions = Object.entries(filter).map(([col, val]) => {
-        params.push(serializeValue(val));
+        params.push(bindable(val));
         return `${col} = ?`;
       });
       sql += ` WHERE ${conditions.join(' AND ')}`;
@@ -96,7 +104,9 @@ export class SQLiteDriver implements IStorageDriver {
       sql += ` LIMIT ${limit}`;
     }
 
-    return this.db!.prepare(sql).all(...params) as Record<string, unknown>[];
+    return (this.db!.prepare(sql).all(...params) as Record<string, unknown>[]).map(
+      deserializeRecord,
+    );
   }
 
   async close(): Promise<void> {
@@ -119,24 +129,17 @@ export class SQLiteDriver implements IStorageDriver {
   }
 }
 
-/** Map collection names to their primary key columns. */
-function getPrimaryKeyColumn(collection: string): string {
-  const pkMap: Record<string, string> = {
-    identity: 'did',
-    wot_peers: 'did',
-    voucher_redeemed: 'nullifier',
-    channel_meta: 'channel_id',
-    message_stream: 'id',
-    outbox: 'id',
-  };
-  return pkMap[collection] ?? 'id';
-}
-
-/** Serialize a value for SQLite storage. */
-function serializeValue(value: unknown): unknown {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'boolean') return value ? 1 : 0;
-  if (Array.isArray(value)) return JSON.stringify(value);
-  if (typeof value === 'object') return JSON.stringify(value);
-  return value;
+/**
+ * Prepare a value for a better-sqlite3 parameter slot.
+ *
+ * The driver binds `Buffer` to BLOB but rejects a bare `Uint8Array`, so
+ * binary is converted here rather than in `serializeValue` — the shared
+ * helper stays backend-neutral and IndexedDB keeps storing the typed
+ * array natively.
+ */
+function bindable(value: unknown): unknown {
+  const serialized = serializeValue(value);
+  return serialized instanceof Uint8Array
+    ? Buffer.from(serialized)
+    : serialized;
 }

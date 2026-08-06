@@ -11,7 +11,7 @@
  * - Full sub-stream multiplexing support for all 6 stream types.
  */
 
-import { EventEmitter } from 'node:events';
+import { Emitter } from './emitter.js';
 
 import type { Ed25519KeyPair } from './did-key.js';
 import { publicKeyToDidKey } from './did-key.js';
@@ -40,7 +40,7 @@ const localTransportRegistry = new Map<string, LocalTransport>();
  * In-process connection between two local peers.
  */
 class LocalConnection implements IConnection {
-  private readonly frameEmitter = new EventEmitter();
+  private readonly frameEmitter = new Emitter<{ frame: [Frame] }>();
   private readonly sendQueue = new PriorityFrameQueue();
   private _state: ConnectionState = ConnectionState.Handshaking;
   private flushScheduled = false;
@@ -132,7 +132,9 @@ class LocalConnection implements IConnection {
  * with full frame codec, handshake, and multiplexing support.
  */
 export class LocalTransport implements ITransport {
-  private readonly connectionEmitter = new EventEmitter();
+  private readonly connectionEmitter = new Emitter<{
+    connection: [IConnection];
+  }>();
   private readonly connections = new Map<string, LocalConnection>();
   private readonly didKey: string;
   private closed = false;

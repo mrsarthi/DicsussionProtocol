@@ -1,0 +1,37 @@
+{
+  "name": "@dicsussion/sdk",
+  "version": "0.1.0",
+  "description": "Dicsussion headless backend and client SDK \u00e2\u20ac\u201d local-first, end-to-end encrypted, metadata-private messaging (RFC 004)",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json"
+  },
+  "dependencies": {
+    "@dicsussion/core": "0.1.0",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.0.1",
+    "@scure/bip39": "^2.2.0",
+    "better-sqlite3": "^13.0.2",
+    "uuid": "^14.0.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "browser": {
+    "./dist/storage/sqlite-driver.js": false
+  }
+}

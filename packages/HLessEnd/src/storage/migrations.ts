@@ -117,6 +117,74 @@ export const migrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 3,
+    description: 'ZekPoc identity secrets and blind-signing keys (RFC 004 §4.1)',
+    up: (db) => {
+      // RFC 004 §4.1 places ZekPoc identity secrets in the identity
+      // collection, so these extend the existing table rather than
+      // forming a separate one.
+      //
+      // All values are stored as decimal strings: SQLite INTEGER is
+      // 64-bit and would silently truncate a 254-bit field element.
+      db.exec(`
+        ALTER TABLE identity ADD COLUMN rln_identity_secret TEXT;
+        ALTER TABLE identity ADD COLUMN rln_trapdoor TEXT;
+        ALTER TABLE identity ADD COLUMN blind_modulus TEXT;
+        ALTER TABLE identity ADD COLUMN blind_exponent TEXT;
+        ALTER TABLE identity ADD COLUMN blind_private_exponent TEXT;
+      `);
+
+      // Redemption nullifiers already spent, so a restarted node still
+      // rejects replayed vouchers (RFC 003 §8 ReplayedVoucher).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS voucher_nullifiers (
+          nullifier TEXT PRIMARY KEY,
+          scope TEXT NOT NULL,
+          redeemed_at INTEGER NOT NULL
+        );
+      `);
+
+      // Signed channel genesis anchors (Phase 2A bootstrapping).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS genesis_anchors (
+          channel_id TEXT PRIMARY KEY,
+          creator_did TEXT NOT NULL,
+          creator_commitment TEXT NOT NULL,
+          initial_root TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          signature BLOB NOT NULL
+        );
+      `);
+    },
+  },
+  {
+    version: 4,
+    description: 'BIP-39 recovery phrase storage (RFC 004 §7.3)',
+    up: (db) => {
+      // The phrase regenerates every derived key, so it is exactly as
+      // sensitive as the secret keys beside it — and shares their
+      // outstanding requirement for OS-keychain wrapping (RFC 004 §4.1).
+      db.exec(`
+        ALTER TABLE identity ADD COLUMN mnemonic_encrypted TEXT;
+      `);
+    },
+  },
+  {
+    version: 5,
+    description: 'Channel proof policy in the genesis anchor (RFC 003 §3.4.3)',
+    up: (db) => {
+      // Defaults to 0 so anchors written before the policy existed keep
+      // their effective behaviour. They will still fail signature
+      // verification against the v2 encoding, which is correct: their
+      // signature never covered a policy, so treating one as signed
+      // would be a forgery we performed on the creator's behalf.
+      db.exec(`
+        ALTER TABLE genesis_anchors
+          ADD COLUMN require_proofs INTEGER NOT NULL DEFAULT 0;
+      `);
+    },
+  },
 ];
 
 /**

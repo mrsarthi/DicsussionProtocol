@@ -9,13 +9,14 @@
  * and CRDT layers.
  */
 
-import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 
-import type { DocumentManager } from '../../core/src/crdt/document-manager.js';
+import { Emitter } from '@dicsussion/core/transport';
+import type { DocumentManager } from '@dicsussion/core/crdt';
 import type { MessagePayload } from './message-codec.js';
 import type { OutboxManager } from './outbox.js';
 import { currentEpoch } from './outbox.js';
+import type { WireProof } from './proof-service.js';
 import type { SdkChatMessage, SendMessageOptions } from './types.js';
 
 /** Maximum listeners per channel (RFC 004 §7.4). */
@@ -37,6 +38,31 @@ export interface ChatServiceDeps {
   readonly publish: (payload: MessagePayload) => Promise<void>;
   /** Persist a message to the local message stream. */
   readonly persist?: (message: SdkChatMessage) => Promise<void>;
+  /**
+   * Derive an RLN signal for an anonymous send (RFC 003 §4.1).
+   *
+   * Absent when no ZK engine is attached, in which case anonymous sends
+   * are refused rather than silently falling back to attributed ones.
+   */
+  readonly createAnonymousSignal?: (
+    channelId: string,
+    messageIndex: number,
+  ) => Promise<{
+    nullifierHash: string;
+    share: { x: string; y: string };
+    /** Groth16 proof, present only when the channel requires one. */
+    zkProof?: WireProof;
+  }>;
+  /**
+   * Validate an inbound anonymous message's RLN signal.
+   *
+   * Returns false when the sender exceeded quota, the signal is
+   * malformed, or an attached Groth16 proof fails to verify. Feeding
+   * the share to the slashing detector happens here too, which is what
+   * makes double-sends detectable on live traffic rather than only in
+   * tests.
+   */
+  readonly verifyRlnSignal?: (payload: MessagePayload) => Promise<boolean>;
 }
 
 /**
@@ -45,7 +71,7 @@ export interface ChatServiceDeps {
 export class ChatService {
   static readonly MAX_LISTENERS_PER_CHANNEL = MAX_LISTENERS_PER_CHANNEL;
 
-  private readonly emitter = new EventEmitter();
+  private readonly emitter = new Emitter<Record<string, [SdkChatMessage]>>();
   private readonly listenerCounts = new Map<string, number>();
   private deps: ChatServiceDeps | null = null;
 
@@ -73,7 +99,32 @@ export class ChatService {
 
     const id = uuidv4();
     const timestamp = Math.floor(Date.now() / 1000);
-    const authorDid = deps.getLocalDid();
+    // Sequence within this channel, so messages sharing a one-second
+    // timestamp still order correctly (RFC 002 §4.3).
+    const messageIndex = deps.documents.getMessageCount(options.channelId);
+
+    // An anonymous message is identified by its nullifier instead of a
+    // did:key. The two are mutually exclusive — carrying both would
+    // defeat the anonymity the nullifier exists to provide.
+    let authorDid: string | undefined = deps.getLocalDid();
+    let nullifierHash: string | undefined;
+    let rlnShare: { x: string; y: string } | undefined;
+    let zkProof: WireProof | undefined;
+
+    if (options.anonymous) {
+      if (!deps.createAnonymousSignal) {
+        throw new Error(
+          'Anonymous sending requires the RLN engine; no signal source is attached',
+        );
+      }
+
+      authorDid = undefined;
+      ({
+        nullifierHash,
+        share: rlnShare,
+        zkProof,
+      } = await deps.createAnonymousSignal(options.channelId, messageIndex));
+    }
 
     const payload: MessagePayload = {
       id,
@@ -81,9 +132,10 @@ export class ChatService {
       authorDid,
       content: options.content,
       timestamp,
-      // Sequence within this channel, so messages sharing a one-second
-      // timestamp still order correctly (RFC 002 §4.3).
-      messageIndex: deps.documents.getMessageCount(options.channelId),
+      messageIndex,
+      nullifierHash,
+      rlnShare,
+      zkProof,
     };
 
     // Local-first: record it before attempting any network work.
@@ -93,12 +145,14 @@ export class ChatService {
       id,
       channelId: options.channelId,
       authorDid,
+      nullifierHash,
       content: options.content,
       timestamp,
       verifiedTier: 0,
       proofEpoch: currentEpoch(),
       proofValid: true,
       envelopeRef: id,
+      zkProof: zkProof ? JSON.stringify(zkProof) : undefined,
     };
 
     await deps.persist?.(message);
@@ -206,18 +260,35 @@ export class ChatService {
   async ingestRemote(payload: MessagePayload): Promise<SdkChatMessage> {
     const deps = this.requireDeps();
 
+    // An anonymous message is only admissible if its RLN signal checks
+    // out. Recording first and validating later would let an over-quota
+    // sender's message land regardless of the verdict.
+    const proofValid = deps.verifyRlnSignal
+      ? await deps.verifyRlnSignal(payload)
+      : payload.nullifierHash === undefined;
+
+    if (payload.nullifierHash !== undefined && !proofValid) {
+      throw new Error(
+        `Rejected anonymous message ${payload.id}: RLN signal failed validation`,
+      );
+    }
+
     this.recordLocally(deps, payload);
 
     const message: SdkChatMessage = {
       id: payload.id,
       channelId: payload.channelId,
       authorDid: payload.authorDid,
+      nullifierHash: payload.nullifierHash,
       content: payload.content,
       timestamp: payload.timestamp,
       verifiedTier: 0,
       proofEpoch: Math.floor(payload.timestamp / 10),
-      proofValid: true,
+      proofValid,
       envelopeRef: payload.id,
+      // Surfaced so an app can tell "verified against a proof" from
+      // "no proof was required" — `proofValid` alone conflates them.
+      zkProof: payload.zkProof ? JSON.stringify(payload.zkProof) : undefined,
     };
 
     await deps.persist?.(message);
@@ -246,6 +317,7 @@ export class ChatService {
     documents.addMessage(payload.channelId, {
       id: payload.id,
       authorDid: payload.authorDid,
+      nullifierHash: payload.nullifierHash,
       content: payload.content,
       timestamp: payload.timestamp,
       messageIndex: payload.messageIndex,

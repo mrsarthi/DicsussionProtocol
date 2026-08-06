@@ -105,4 +105,10 @@ export const StorageCollections = {
   CHANNEL_META: 'channel_meta',
   MESSAGE_STREAM: 'message_stream',
   OUTBOX: 'outbox',
+  /** Automerge snapshots (RFC 002 §4.4). */
+  CRDT_DOCUMENTS: 'crdt_documents',
+  /** Spent redemption nullifiers (RFC 003 §8). */
+  VOUCHER_NULLIFIERS: 'voucher_nullifiers',
+  /** Signed channel genesis anchors. */
+  GENESIS_ANCHORS: 'genesis_anchors',
 } as const;

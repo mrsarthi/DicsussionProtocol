@@ -10,16 +10,11 @@
  * some size moved between two peers.
  */
 
-import {
-  decryptFromPeer,
-  encryptForPeer,
-} from '../../core/src/crypto/encryption.js';
-import {
-  deserializeEnvelope,
-  serializeEnvelope,
-} from '../../core/src/crypto/envelope.js';
-import type { SecurityEnvelope } from '../../core/src/crypto/types.js';
-import { PROTOCOL_VERSION } from '../../core/src/crypto/types.js';
+import { decryptFromPeer, encryptForPeer } from '@dicsussion/core/crypto';
+import { deserializeEnvelope, serializeEnvelope } from '@dicsussion/core/crypto';
+import type { SecurityEnvelope } from '@dicsussion/core/crypto';
+import { PROTOCOL_VERSION } from '@dicsussion/core/crypto';
+import type { WireProof } from './proof-service.js';
 
 /** The plaintext body carried inside an envelope. */
 export interface MessagePayload {
@@ -35,6 +30,34 @@ export interface MessagePayload {
    * order messages that share a one-second timestamp.
    */
   readonly messageIndex: number;
+  /**
+   * RLN nullifier η, present exactly when `authorDid` is absent.
+   *
+   * In an anonymous channel this is the only sender identifier, and it
+   * is what makes rate limiting possible without attribution: reusing
+   * one within an epoch is what exposes the sender's own secret.
+   */
+  readonly nullifierHash?: string;
+  /**
+   * The RLN polynomial share accompanying an anonymous message.
+   *
+   * `x` is the message commitment, `y = a_0 + a_1·x`. Both travel with
+   * the message because slashing needs **two points on the same line**:
+   * without `y` on the wire, a recipient can see that a nullifier was
+   * reused but cannot interpolate the offender's secret, and the rate
+   * limit is unenforceable.
+   *
+   * Present exactly when `nullifierHash` is.
+   */
+  readonly rlnShare?: { readonly x: string; readonly y: string };
+  /**
+   * Groth16 proof of membership, tier, and quota (RFC 003 §3.4).
+   *
+   * Present when the channel's signed anchor requires proofs. Policy
+   * comes from the anchor rather than local settings, so every member
+   * reaches the same answer.
+   */
+  readonly zkProof?: WireProof;
 }
 
 const encoder = new TextEncoder();
@@ -50,6 +73,9 @@ export function encodePayload(payload: MessagePayload): Uint8Array {
       content: payload.content,
       timestamp: payload.timestamp,
       messageIndex: payload.messageIndex,
+      nullifierHash: payload.nullifierHash ?? null,
+      rlnShare: payload.rlnShare ?? null,
+      zkProof: payload.zkProof ?? null,
     }),
   );
 }
@@ -82,6 +108,11 @@ export function decodePayload(bytes: Uint8Array): MessagePayload {
 
   const authorDid = raw['authorDid'];
   const messageIndex = raw['messageIndex'];
+  const nullifierHash = raw['nullifierHash'];
+  const share = raw['rlnShare'] as { x?: unknown; y?: unknown } | null;
+  const proof = raw['zkProof'] as
+    | { proof?: unknown; publicSignals?: unknown }
+    | null;
 
   return {
     id: raw['id'],
@@ -90,16 +121,32 @@ export function decodePayload(bytes: Uint8Array): MessagePayload {
     content: raw['content'],
     timestamp: raw['timestamp'],
     messageIndex: typeof messageIndex === 'number' ? messageIndex : 0,
+    nullifierHash: typeof nullifierHash === 'string' ? nullifierHash : undefined,
+    rlnShare:
+      share && typeof share.x === 'string' && typeof share.y === 'string'
+        ? { x: share.x, y: share.y }
+        : undefined,
+    // Signals must be strings on the wire: a JSON number cannot hold a
+    // 254-bit field element without silently losing precision.
+    zkProof:
+      proof &&
+      proof.proof !== undefined &&
+      Array.isArray(proof.publicSignals) &&
+      proof.publicSignals.every((v) => typeof v === 'string')
+        ? { proof: proof.proof, publicSignals: proof.publicSignals as string[] }
+        : undefined,
   };
 }
 
 /**
  * Encrypt a payload into a wire-ready SecurityEnvelope.
  *
- * Phase 1A carries no zero-knowledge proof: `zkProof` is empty and
- * `rlnNullifier` is zero-filled. The RLN fields are populated in Phase 3
- * once the proving engine exists; the envelope layout already reserves
- * them so the wire format does not change.
+ * The envelope's `rlnNullifier` carries the RLN nullifier when the
+ * payload is anonymous, so a recipient can index shares without first
+ * decrypting. The Groth16 proof, when the channel requires one, rides
+ * inside the encrypted plaintext rather than the envelope header —
+ * public signals name the channel's membership root, which would
+ * otherwise leak the conversation to an on-path observer.
  *
  * @param payload The plaintext message.
  * @param recipientEncryptionKey Recipient's 32-byte X25519 public key.

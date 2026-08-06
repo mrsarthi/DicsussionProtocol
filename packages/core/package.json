@@ -1,0 +1,61 @@
+{
+  "name": "@dicsussion/core",
+  "version": "0.1.0",
+  "description": "Dicsussion protocol engine \u00e2\u20ac\u201d transport, crypto, CRDT sync, and zero-knowledge anti-spam (RFC 001\u00e2\u20ac\u201c003)",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./transport": {
+      "types": "./dist/transport/index.d.ts",
+      "default": "./dist/transport/index.js"
+    },
+    "./crypto": {
+      "types": "./dist/crypto/index.d.ts",
+      "default": "./dist/crypto/index.js"
+    },
+    "./crdt": {
+      "types": "./dist/crdt/index.d.ts",
+      "default": "./dist/crdt/index.js"
+    },
+    "./zk": {
+      "types": "./dist/zk/index.d.ts",
+      "default": "./dist/zk/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src/zk/artifacts/rln_final.zkey",
+    "src/zk/artifacts/verification_key.json",
+    "src/zk/artifacts/DEVELOPMENT_ONLY.md",
+    "src/zk/circuits/rln_range_unified_js"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json"
+  },
+  "dependencies": {
+    "@automerge/automerge": "^3.4.0",
+    "@noble/ciphers": "^2.2.0",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.0.1",
+    "crc-32": "^1.2.2",
+    "lz4js": "^0.2.0",
+    "multiformats": "^14.0.5",
+    "poseidon-lite": "^0.3.0",
+    "uuid": "^14.0.1"
+  },
+  "optionalDependencies": {
+    "@number0/iroh": "^1.1.0",
+    "snarkjs": "^0.7.6"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "browser": {
+    "./dist/transport/iroh-transport.js": false,
+    "./dist/transport/iroh-connection.js": false,
+    "./dist/transport/mdns-discovery.js": false,
+    "./dist/transport/datagram-socket.js": false,
+    "./dist/zk/prover.js": false,
+    "./dist/zk/artifact-paths.js": false
+  }
+}

@@ -107,6 +107,23 @@ export interface PeerTicket {
   readonly directAddresses: readonly string[];
   /** Optional Iroh DERP relay endpoint for fallback. */
   readonly derpRelay?: string;
+  /**
+   * Raw 32-byte transport public key — the peer's Iroh `EndpointId`.
+   *
+   * Derived from the identity key via domain-separated HKDF, so it
+   * cannot be computed from `didKey` alone (derivation needs the
+   * secret). It is therefore published here. Absent for transports that
+   * do not use a separate key, such as `LocalTransport`.
+   */
+  readonly transportKey?: Uint8Array;
+  /**
+   * Raw 32-byte X25519 public key for E2EE.
+   *
+   * RFC 001 §3.3 calls a ticket an out-of-band *pairing* artifact, so it
+   * carries everything needed to start an encrypted conversation. Without
+   * this the recipient could dial the peer but not encrypt to them.
+   */
+  readonly encryptionKey?: Uint8Array;
 }
 
 // ─── Handshake Messages (RFC 001 §5) ─────────────────────────────────────────

@@ -10,7 +10,6 @@
  *   A → B: HandshakeAck { sig_a(nonce_b) }
  */
 
-import { randomBytes } from 'node:crypto';
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -58,7 +57,8 @@ export function createHandshakeInit(
   timestampS?: number,
 ): HandshakeInit {
   void keypair; // keypair used for later signing, included for API consistency
-  const nonce = new Uint8Array(randomBytes(32));
+  const nonce = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(nonce);
   const timestamp = timestampS ?? Math.floor(Date.now() / 1000);
 
   return { timestamp, didKey, nonce };
@@ -118,7 +118,8 @@ export function processHandshakeInit(
   const signature = ed25519.sign(init.nonce, responderKeypair.secretKey);
 
   // Generate responder's nonce
-  const nonce = new Uint8Array(randomBytes(32));
+  const nonce = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(nonce);
 
   return {
     challenge: { nonce, signature },

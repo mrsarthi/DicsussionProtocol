@@ -9,7 +9,7 @@
  * cross-protocol hazard, so each node carries a distinct X25519 key.
  */
 
-import type { IConnection } from '../../core/src/transport/transport-interface.js';
+import type { IConnection } from '@dicsussion/core/transport';
 
 /** A known peer and its current connection state. */
 export interface PeerRecord {

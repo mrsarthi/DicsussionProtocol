@@ -31,7 +31,7 @@ async function openStore(): Promise<{
 }> {
   const driver = new SQLiteDriver(':memory:');
   await driver.initialize();
-  return { store: new DocumentStore(driver.getDatabase()), driver };
+  return { store: new DocumentStore(driver), driver };
 }
 
 test.describe('Storage — CRDT Document Store', () => {
@@ -50,7 +50,7 @@ test.describe('Storage — CRDT Document Store', () => {
 
       store.checkpoint(docs, 'doc-1');
 
-      const stored = store.load('doc-1');
+      const stored = await store.load('doc-1');
       expect(stored).toBeDefined();
       expect(stored!.messageCount).toBe(1);
       expect(stored!.snapshot.length).toBeGreaterThan(0);
@@ -77,7 +77,7 @@ test.describe('Storage — CRDT Document Store', () => {
       expect(store.checkpointAll(original)).toBe(2);
 
       const restored = new DocumentManager();
-      const ids = store.restoreAll(restored);
+      const ids = await store.restoreAll(restored);
 
       expect(ids.sort()).toEqual(['doc-1', 'doc-2']);
       expect(restored.getDocument('doc-1')!.messages['m1']!.content).toBe(
@@ -97,7 +97,7 @@ test.describe('Storage — CRDT Document Store', () => {
       docs.createDocument('General', 'doc-1');
 
       store.checkpoint(docs, 'doc-1');
-      expect(store.load('doc-1')!.messageCount).toBe(0);
+      expect((await store.load('doc-1'))!.messageCount).toBe(0);
 
       docs.addMessage('doc-1', {
         id: 'm1',
@@ -107,8 +107,8 @@ test.describe('Storage — CRDT Document Store', () => {
       });
       store.checkpoint(docs, 'doc-1');
 
-      expect(store.listDocumentIds()).toEqual(['doc-1']);
-      expect(store.load('doc-1')!.messageCount).toBe(1);
+      expect(await store.listDocumentIds()).toEqual(['doc-1']);
+      expect((await store.load('doc-1'))!.messageCount).toBe(1);
     } finally {
       await driver.close();
     }
@@ -122,9 +122,9 @@ test.describe('Storage — CRDT Document Store', () => {
       docs.createDocument('General', 'doc-1');
       store.checkpoint(docs, 'doc-1');
 
-      expect(store.delete('doc-1')).toBe(true);
-      expect(store.load('doc-1')).toBeUndefined();
-      expect(store.delete('doc-1')).toBe(false);
+      expect(await store.delete('doc-1')).toBe(true);
+      expect(await store.load('doc-1')).toBeUndefined();
+      expect(await store.delete('doc-1')).toBe(false);
     } finally {
       await driver.close();
     }
@@ -157,14 +157,17 @@ test.describe('Storage — CRDT Document Store', () => {
         timestamp: 1_700_000_000,
         authorDid: 'did:key:zA',
       });
-      new DocumentStore(first.getDatabase()).checkpointAll(docs);
+      const firstStore = new DocumentStore(first);
+      firstStore.checkpointAll(docs);
+      // Writes are queued, so closing without flushing would drop them.
+      await firstStore.flush();
       await first.close();
 
       const second = new SQLiteDriver(dbPath);
       await second.initialize();
 
       const restored = new DocumentManager();
-      new DocumentStore(second.getDatabase()).restoreAll(restored);
+      await new DocumentStore(second).restoreAll(restored);
 
       expect(restored.getDocument('doc-1')!.messages['m1']!.content).toBe(
         'durable across restarts',

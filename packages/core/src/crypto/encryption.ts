@@ -3,11 +3,24 @@
  *
  * Symmetric encryption/decryption and ephemeral-key E2EE
  * for message payloads per RFC 003 §6.
+ *
+ * Uses `@noble/ciphers` rather than `node:crypto` or Web Crypto. The
+ * reason is not portability alone — it is that **Web Crypto's AES-GCM is
+ * async and these functions are synchronous**. `sealMessage`,
+ * `encryptForPeer`, and every caller above them are sync, so adopting
+ * `crypto.subtle` would push `await` through the message path for no
+ * behavioural gain. Noble is a pure-JS constant-time implementation that
+ * is sync on every runtime.
+ *
+ * The ciphertext layout is unchanged: raw ciphertext followed by the
+ * 16-byte GCM tag, byte-for-byte interoperable with the previous
+ * `node:crypto` implementation, so data written by an older build still
+ * decrypts.
  */
 
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { gcm } from '@noble/ciphers/aes.js';
 
-import type { EncryptedPayload, KeyPair } from './types.js';
+import type { EncryptedPayload } from './types.js';
 import { deriveSharedSecret, generateX25519Keypair } from './keys.js';
 
 /** AES-256-GCM nonce size in bytes. */
@@ -27,23 +40,14 @@ export function encrypt(
   plaintext: Uint8Array,
   sharedSecret: Uint8Array,
 ): { ciphertext: Uint8Array; nonce: Uint8Array } {
-  const nonce = new Uint8Array(randomBytes(NONCE_SIZE));
-  const cipher = createCipheriv('aes-256-gcm', sharedSecret, nonce);
+  // A repeated (key, nonce) pair under GCM is catastrophic — it leaks
+  // the XOR of both plaintexts and the authentication subkey. The nonce
+  // must come from a CSPRNG, never a counter we might reset.
+  const nonce = new Uint8Array(NONCE_SIZE);
+  globalThis.crypto.getRandomValues(nonce);
 
-  const encrypted = cipher.update(plaintext);
-  const final = cipher.final();
-  const tag = cipher.getAuthTag();
-
-  // Concatenate encrypted + final + tag
-  const ciphertext = new Uint8Array(encrypted.length + final.length + TAG_SIZE);
-  ciphertext.set(new Uint8Array(encrypted.buffer, encrypted.byteOffset, encrypted.length));
-  ciphertext.set(
-    new Uint8Array(final.buffer, final.byteOffset, final.length),
-    encrypted.length,
-  );
-  ciphertext.set(new Uint8Array(tag.buffer, tag.byteOffset, tag.length), encrypted.length + final.length);
-
-  return { ciphertext, nonce };
+  // Noble returns ciphertext with the tag already appended.
+  return { ciphertext: gcm(sharedSecret, nonce).encrypt(plaintext), nonce };
 }
 
 /**
@@ -64,20 +68,9 @@ export function decrypt(
     throw new Error('Ciphertext too short to contain auth tag');
   }
 
-  const encryptedData = ciphertext.subarray(0, ciphertext.length - TAG_SIZE);
-  const tag = ciphertext.subarray(ciphertext.length - TAG_SIZE);
-
-  const decipher = createDecipheriv('aes-256-gcm', sharedSecret, nonce);
-  decipher.setAuthTag(tag);
-
-  const decrypted = decipher.update(encryptedData);
-  const final = decipher.final();
-
-  const result = new Uint8Array(decrypted.length + final.length);
-  result.set(new Uint8Array(decrypted.buffer, decrypted.byteOffset, decrypted.length));
-  result.set(new Uint8Array(final.buffer, final.byteOffset, final.length), decrypted.length);
-
-  return result;
+  // Throws on a tag mismatch, which is the point: a caller must never be
+  // handed plaintext that failed authentication.
+  return gcm(sharedSecret, nonce).decrypt(ciphertext);
 }
 
 /**
@@ -95,7 +88,10 @@ export function encryptForPeer(
   recipientX25519Pub: Uint8Array,
 ): EncryptedPayload {
   const ephemeral = generateX25519Keypair();
-  const sharedSecret = deriveSharedSecret(ephemeral.secretKey, recipientX25519Pub);
+  const sharedSecret = deriveSharedSecret(
+    ephemeral.secretKey,
+    recipientX25519Pub,
+  );
   const { ciphertext, nonce } = encrypt(plaintext, sharedSecret);
 
   return {
@@ -119,6 +115,9 @@ export function decryptFromPeer(
   payload: EncryptedPayload,
   myX25519Priv: Uint8Array,
 ): Uint8Array {
-  const sharedSecret = deriveSharedSecret(myX25519Priv, payload.ephemeralPubkey);
+  const sharedSecret = deriveSharedSecret(
+    myX25519Priv,
+    payload.ephemeralPubkey,
+  );
   return decrypt(payload.ciphertext, payload.nonce, sharedSecret);
 }

@@ -10,10 +10,13 @@
  * (AGENT_INSTRUCTIONS §4.1 rule 3).
  */
 
-import type { CrdtSyncEngine } from '../../core/src/crdt/sync-engine.js';
-import type { IConnection } from '../../core/src/transport/transport-interface.js';
-import type { Frame } from '../../core/src/transport/types.js';
-import { StreamType } from '../../core/src/transport/types.js';
+import { decodeSyncFrame, SyncMessageType } from '@dicsussion/core/crdt';
+import type { CrdtSyncEngine } from '@dicsussion/core/crdt';
+import type { MembershipSyncEngine } from '@dicsussion/core/crdt';
+import type { SyncFrame } from '@dicsussion/core/crdt';
+import { StreamType } from '@dicsussion/core/transport';
+import type { Frame } from '@dicsussion/core/transport';
+import type { IConnection } from '@dicsussion/core/transport';
 import type { MessagePayload } from './message-codec.js';
 import { openMessage, sealMessage } from './message-codec.js';
 import { currentEpoch } from './outbox.js';
@@ -27,6 +30,28 @@ export interface SessionManagerDeps {
   readonly getEncryptionSecret: () => Uint8Array;
   /** Hand a decrypted message to the chat layer. */
   readonly onMessage: (payload: MessagePayload) => Promise<void>;
+  /**
+   * Membership reconciliation engine.
+   *
+   * Optional so the session manager works before groups are wired.
+   */
+  readonly membershipSync?: MembershipSyncEngine;
+  /**
+   * Handle a Stream 0x04 voucher frame.
+   *
+   * Optional so the session manager still works before the Web-of-Trust
+   * stack is attached.
+   */
+  readonly onVoucherFrame?: (
+    payload: Uint8Array,
+    connection: IConnection,
+  ) => Promise<void>;
+  /** Handle a Stream 0x06 RLN share frame. */
+  readonly onShareFrame?: (payload: Uint8Array) => Promise<void>;
+  /** Handle a Stream 0x03 revocation tombstone. */
+  readonly onRevocationFrame?: (payload: Uint8Array) => Promise<void>;
+  /** Handle a Stream 0x05 RLN signal broadcast. */
+  readonly onSignalFrame?: (payload: Uint8Array) => Promise<void>;
 }
 
 /**
@@ -61,6 +86,7 @@ export class SessionManager {
     if (!peers.getPeer(peerDid)) {
       peers.addPeer(peerDid, new Uint8Array(32));
     }
+
     peers.attachConnection(peerDid, connection);
     syncEngine.registerPeer(peerDid);
 
@@ -85,7 +111,7 @@ export class SessionManager {
    */
   async publish(payload: MessagePayload): Promise<void> {
     const epoch = currentEpoch();
-    const sends: Promise<void>[] = [];
+    const sends: Array<Promise<void>> = [];
 
     for (const peer of this.deps.peers.listConnected()) {
       // Peers that connected inbound before pairing carry a placeholder
@@ -100,7 +126,10 @@ export class SessionManager {
   }
 
   /** Route an inbound frame by sub-stream. */
-  private async handleFrame(frame: Frame, connection: IConnection): Promise<void> {
+  private async handleFrame(
+    frame: Frame,
+    connection: IConnection,
+  ): Promise<void> {
     try {
       switch (frame.header.streamType) {
         case StreamType.CRDT_SYNC:
@@ -109,8 +138,21 @@ export class SessionManager {
         case StreamType.E2EE_MESSAGE:
           await this.handleMessageFrame(frame);
           break;
+        case StreamType.VOUCHER_HANDSHAKE:
+          await this.deps.onVoucherFrame?.(frame.payload, connection);
+          break;
+        case StreamType.REVOCATION_GOSSIP:
+          await this.deps.onRevocationFrame?.(frame.payload);
+          break;
+        case StreamType.RLN_SHARE_EXCHANGE:
+          await this.deps.onShareFrame?.(frame.payload);
+          break;
+        case StreamType.RLN_SIGNAL:
+          await this.deps.onSignalFrame?.(frame.payload);
+          break;
         default:
-          // Streams 0x03–0x06 belong to Phases 2–3; ignore for now.
+          // Unknown stream types are ignored, never fatal — a future
+          // protocol version may add one (RFC 001 §7).
           break;
       }
     } catch {
@@ -119,7 +161,14 @@ export class SessionManager {
     }
   }
 
-  private async handleSyncFrame(frame: Frame, connection: IConnection): Promise<void> {
+  private async handleSyncFrame(
+    frame: Frame,
+    connection: IConnection,
+  ): Promise<void> {
+    // Membership messages ride the same sub-stream as document sync but
+    // are handled by a different engine, so they are split out first.
+    if (await this.routeMembershipFrame(frame, connection)) return;
+
     const replies = this.deps.syncEngine.handleMessage(
       connection.peerDid,
       frame.payload,
@@ -130,6 +179,49 @@ export class SessionManager {
     }
 
     this.lastSyncTimestamp = Date.now();
+  }
+
+  /**
+   * Dispatch a membership message, if this frame is one.
+   *
+   * @returns True when the frame was membership traffic and is handled.
+   */
+  private async routeMembershipFrame(
+    frame: Frame,
+    connection: IConnection,
+  ): Promise<boolean> {
+    const membership = this.deps.membershipSync;
+    if (!membership) return false;
+
+    let decoded: SyncFrame;
+    try {
+      decoded = decodeSyncFrame(frame.payload);
+    } catch {
+      return false;
+    }
+
+    const peer = connection.peerDid;
+    let replies: Uint8Array[];
+
+    switch (decoded.type) {
+      case SyncMessageType.MEMBER_ROOT:
+        replies = membership.handleMemberRoot(peer, decoded.docId, decoded.body);
+        break;
+      case SyncMessageType.MEMBER_LIST:
+        replies = membership.handleMemberList(peer, decoded.docId, decoded.body);
+        break;
+      case SyncMessageType.MEMBER_DEPARTURE:
+        replies = membership.handleDeparture(peer, decoded.docId, decoded.body);
+        break;
+      default:
+        return false;
+    }
+
+    for (const reply of replies) {
+      await connection.send(StreamType.CRDT_SYNC, reply);
+    }
+
+    return true;
   }
 
   private async handleMessageFrame(frame: Frame): Promise<void> {

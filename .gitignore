@@ -1,11 +1,70 @@
+# App-specific strategy notes, kept out of the protocol repo
 /.agents
+/docs
+
+# ─── Dependencies & build output ──────────────────────────────────────
 node_modules/
 dist/
+*.tsbuildinfo
+
+# ─── Test output ──────────────────────────────────────────────────────
 test-results/
 playwright-report/
-*.tsbuildinfo
+blob-report/
+.playwright/
 
 # SQLite artifacts left behind by tests
 *.db
 *.db-wal
 *.db-shm
+
+# ─── Generated circuit artifacts (~47 MB) ─────────────────────────────
+# Every one of these is produced by `npm run zk:build` from the .circom
+# source, so committing them bloats history permanently for no gain.
+#
+# The .ptau is the Powers of Tau transcript — a public download, not
+# something this repo should carry (see docs/TRUSTED_SETUP_CEREMONY.md).
+#
+# NOTE: the *real* ceremony's rln_final.zkey and verification_key.json
+# are a different matter. Those are consensus artifacts every peer must
+# agree on, so when the ceremony completes, commit them deliberately:
+#   git add -f packages/core/src/zk/artifacts/rln_final.zkey
+#   git add -f packages/core/src/zk/artifacts/verification_key.json
+*.ptau
+*.zkey
+*.r1cs
+packages/core/src/zk/artifacts/verification_key.json
+packages/core/src/zk/circuits/*_js/
+
+# ─── Scratch & local experiments ──────────────────────────────────────
+# Leading-underscore files are throwaway probes and benchmarks.
+_*.mjs
+_*.mts
+_*.js
+_*.ts
+!*.d.ts
+
+# ─── Secrets ──────────────────────────────────────────────────────────
+# Nothing in this repo should ever read one, but a stray .env is how
+# credentials reach a public remote.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!packages/**/*.key.ts
+
+# ─── Logs ─────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# ─── Editor & OS ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Machine-local agent settings; the shared config is committed
+.claude/settings.local.json

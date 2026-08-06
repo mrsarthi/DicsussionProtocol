@@ -1,18 +1,25 @@
 /**
  * @dicsussion/storage — CRDT Snapshot Store
  *
- * Persists Automerge document snapshots to SQLite so merged state
- * survives restarts, per RFC 002 §4.4 (periodic checkpointing) and
- * §4.2 step 7 (PersistLocalState).
+ * Persists Automerge document snapshots so merged state survives
+ * restarts, per RFC 002 §4.4 (periodic checkpointing) and §4.2 step 7
+ * (PersistLocalState).
  *
  * Only already-merged state is written here. The canonical state root
- * remains authoritative for reconciliation — this table is storage,
- * never a second source of truth (RFC 002 §4.3).
+ * remains authoritative for reconciliation — this is storage, never a
+ * second source of truth (RFC 002 §4.3).
+ *
+ * Backed by `IStorageDriver` rather than a raw SQLite handle, so the
+ * same store works on IndexedDB in a browser. Writes are queued because
+ * `checkpoint()` is synchronous by contract; call `flush()` when
+ * durability matters — the client does so on disconnect.
  */
 
-import type Database from 'better-sqlite3';
+import type { DocumentManager } from '@dicsussion/core/crdt';
 
-import type { DocumentManager } from '../../../core/src/crdt/document-manager.js';
+import { StorageCollections } from './types.js';
+import type { IStorageDriver } from './types.js';
+import { WriteQueue } from './write-queue.js';
 
 /** A persisted document row. */
 export interface StoredDocument {
@@ -24,20 +31,13 @@ export interface StoredDocument {
   readonly updatedAt: number;
 }
 
-/** Row shape as returned by better-sqlite3. */
-interface DocumentRow {
-  doc_id: string;
-  snapshot: Buffer;
-  head_hash: string;
-  message_count: number;
-  updated_at: number;
-}
-
 /**
- * SQLite-backed persistence for Automerge document snapshots.
+ * Persistence for Automerge document snapshots.
  */
 export class DocumentStore {
-  constructor(private readonly db: Database.Database) {}
+  private readonly writes = new WriteQueue();
+
+  constructor(private readonly storage: IStorageDriver) {}
 
   /**
    * Write (or replace) a document snapshot.
@@ -53,62 +53,53 @@ export class DocumentStore {
     heads: readonly string[],
     messageCount: number,
   ): void {
-    const headHash = [...heads].sort().join(',');
+    const record = {
+      doc_id: docId,
+      // Copied: the caller may reuse or detach its buffer before the
+      // queued write actually runs.
+      snapshot: new Uint8Array(snapshot),
+      head_hash: [...heads].sort().join(','),
+      message_count: messageCount,
+      updated_at: Math.floor(Date.now() / 1000),
+    };
 
-    this.db
-      .prepare(
-        `INSERT INTO crdt_documents
-           (doc_id, snapshot, head_hash, message_count, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(doc_id) DO UPDATE SET
-           snapshot = excluded.snapshot,
-           head_hash = excluded.head_hash,
-           message_count = excluded.message_count,
-           updated_at = excluded.updated_at`,
-      )
-      .run(
-        docId,
-        Buffer.from(snapshot),
-        headHash,
-        messageCount,
-        Math.floor(Date.now() / 1000),
-      );
+    this.writes.enqueue(() =>
+      this.storage.put(StorageCollections.CRDT_DOCUMENTS, docId, record),
+    );
   }
 
   /** Load one document snapshot, or undefined if absent. */
-  load(docId: string): StoredDocument | undefined {
-    const row = this.db
-      .prepare('SELECT * FROM crdt_documents WHERE doc_id = ?')
-      .get(docId) as DocumentRow | undefined;
+  async load(docId: string): Promise<StoredDocument | undefined> {
+    await this.writes.flush();
+
+    const row = await this.storage.get(StorageCollections.CRDT_DOCUMENTS, docId);
 
     return row ? toStoredDocument(row) : undefined;
   }
 
-  /** Load every persisted document. */
-  loadAll(): StoredDocument[] {
-    const rows = this.db
-      .prepare('SELECT * FROM crdt_documents ORDER BY updated_at DESC')
-      .all() as DocumentRow[];
+  /** Load every persisted document, newest first. */
+  async loadAll(): Promise<StoredDocument[]> {
+    await this.writes.flush();
 
-    return rows.map(toStoredDocument);
+    const rows = await this.storage.query(StorageCollections.CRDT_DOCUMENTS);
+
+    return rows.map(toStoredDocument).sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  /** List persisted document ids without materialising snapshots. */
-  listDocumentIds(): string[] {
-    const rows = this.db
-      .prepare('SELECT doc_id FROM crdt_documents ORDER BY doc_id')
-      .all() as { doc_id: string }[];
+  /** List persisted document ids. */
+  async listDocumentIds(): Promise<string[]> {
+    await this.writes.flush();
 
-    return rows.map((r) => r.doc_id);
+    const rows = await this.storage.query(StorageCollections.CRDT_DOCUMENTS);
+
+    return rows.map((row) => String(row['doc_id'])).sort();
   }
 
   /** Delete a persisted document. */
-  delete(docId: string): boolean {
-    const result = this.db
-      .prepare('DELETE FROM crdt_documents WHERE doc_id = ?')
-      .run(docId);
+  async delete(docId: string): Promise<boolean> {
+    await this.writes.flush();
 
-    return result.changes > 0;
+    return this.storage.delete(StorageCollections.CRDT_DOCUMENTS, docId);
   }
 
   /**
@@ -130,16 +121,19 @@ export class DocumentStore {
     );
   }
 
-  /** Checkpoint every document held by a DocumentManager. */
+  /**
+   * Checkpoint every document held by a DocumentManager.
+   *
+   * Snapshots are taken synchronously, so the returned count describes
+   * state at the moment of the call; the writes drain in the background
+   * and `flush()` waits for them.
+   */
   checkpointAll(documents: DocumentManager): number {
     const ids = documents.listDocuments();
-    const persist = this.db.transaction(() => {
-      for (const docId of ids) {
-        this.checkpoint(documents, docId);
-      }
-    });
+    for (const docId of ids) {
+      this.checkpoint(documents, docId);
+    }
 
-    persist();
     return ids.length;
   }
 
@@ -148,25 +142,29 @@ export class DocumentStore {
    *
    * @returns The document ids restored.
    */
-  restoreAll(documents: DocumentManager): string[] {
+  async restoreAll(documents: DocumentManager): Promise<string[]> {
     const restored: string[] = [];
 
-    for (const stored of this.loadAll()) {
+    for (const stored of await this.loadAll()) {
       documents.loadFromSnapshot(stored.docId, stored.snapshot);
       restored.push(stored.docId);
     }
 
     return restored;
   }
+
+  /** Wait for queued snapshot writes to land. */
+  async flush(): Promise<void> {
+    await this.writes.flush();
+  }
 }
 
-function toStoredDocument(row: DocumentRow): StoredDocument {
+function toStoredDocument(row: Record<string, unknown>): StoredDocument {
   return {
-    docId: row.doc_id,
-    // Copy out of the Buffer so callers get a plain, detached Uint8Array.
-    snapshot: new Uint8Array(row.snapshot),
-    headHash: row.head_hash,
-    messageCount: row.message_count,
-    updatedAt: row.updated_at,
+    docId: String(row['doc_id']),
+    snapshot: row['snapshot'] as Uint8Array,
+    headHash: String(row['head_hash'] ?? ''),
+    messageCount: Number(row['message_count'] ?? 0),
+    updatedAt: Number(row['updated_at'] ?? 0),
   };
 }

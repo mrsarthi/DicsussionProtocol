@@ -132,7 +132,11 @@ export class DocumentManager {
       }
       if (!doc.messages) doc.messages = {};
 
-      doc.messages[message.id] = { ...message };
+      // Automerge rejects `undefined` outright rather than treating it as
+      // absent, and both `authorDid` and `nullifierHash` are legitimately
+      // absent — an attributed message has no nullifier, an anonymous one
+      // has no author. Spreading the object as-is throws on every write.
+      doc.messages[message.id] = stripUndefined(message);
     });
   }
 
@@ -325,4 +329,22 @@ function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
     offset += arr.length;
   }
   return result;
+}
+
+/**
+ * Drop keys whose value is `undefined`.
+ *
+ * Automerge distinguishes "absent" from "present but undefined" and
+ * refuses the latter, so an optional field left unset must not appear in
+ * the object at all. Returns a plain copy — the input is never mutated,
+ * because callers reuse their payload after the write.
+ */
+function stripUndefined<T extends Record<string, unknown>>(value: T): T {
+  const out: Record<string, unknown> = {};
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) out[key] = entry;
+  }
+
+  return out as T;
 }
