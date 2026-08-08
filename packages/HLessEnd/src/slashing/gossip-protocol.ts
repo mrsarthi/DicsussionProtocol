@@ -212,19 +212,31 @@ export function decodeTombstone(buffer: Uint8Array): RevocationTombstone {
 
   const doubleSpendProof: DoubleSpendProof | undefined = proof
     ? {
-        nullifier: BigInt(proof.nullifier),
-        shareOne: { x: BigInt(proof.shareOne.x), y: BigInt(proof.shareOne.y) },
-        shareTwo: { x: BigInt(proof.shareTwo.x), y: BigInt(proof.shareTwo.y) },
+        nullifier: safeBigInt(proof.nullifier, 'nullifier'),
+        shareOne: {
+          x: safeBigInt(proof.shareOne?.x, 'shareOne.x'),
+          y: safeBigInt(proof.shareOne?.y, 'shareOne.y'),
+        },
+        shareTwo: {
+          x: safeBigInt(proof.shareTwo?.x, 'shareTwo.x'),
+          y: safeBigInt(proof.shareTwo?.y, 'shareTwo.y'),
+        },
       }
     : undefined;
 
   return {
     revocationId: raw['revocationId'],
-    membershipCommitment: BigInt(raw['membershipCommitment']),
+    membershipCommitment: safeBigInt(
+      raw['membershipCommitment'],
+      'membershipCommitment',
+    ),
     reason: raw['reason'] as RevocationReasonValue,
     doubleSpendProof,
-    reconstructedSecret: optionalBigInt(raw['reconstructedSecret']),
-    trapdoor: optionalBigInt(raw['trapdoor']),
+    reconstructedSecret: optionalBigInt(
+      raw['reconstructedSecret'],
+      'reconstructedSecret',
+    ),
+    trapdoor: optionalBigInt(raw['trapdoor'], 'trapdoor'),
     timestamp: raw['timestamp'],
     validatorDid: raw['validatorDid'],
     signature: new Uint8Array(Buffer.from(raw['signature'], 'base64')),
@@ -267,8 +279,44 @@ function unframe(buffer: Uint8Array): { type: number; body: Uint8Array } {
   return { type, body: buffer.subarray(5, 5 + length) };
 }
 
-function optionalBigInt(value: unknown): bigint | undefined {
-  return typeof value === 'string' && value.length > 0 ? BigInt(value) : undefined;
+/**
+ * Longest decimal string accepted for a field element.
+ *
+ * A BN254 scalar is under 2^254, which is 78 decimal digits. Anything
+ * longer is not a field element, and refusing it early is what stops the
+ * DoS below.
+ */
+const MAX_FIELD_DIGITS = 78;
+
+/**
+ * Parse a field element from untrusted JSON.
+ *
+ * `BigInt()` accepts a string of any length and parses it in worse than
+ * linear time, so a peer that sends a 10 MB run of digits freezes the
+ * event loop for as long as it takes — no memory exhaustion, no error,
+ * just a stalled node. The length check has to happen *before* the
+ * conversion, not after.
+ */
+function safeBigInt(value: unknown, field: string): bigint {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Gossip field ${field} is not a numeric string`);
+  }
+  if (value.length > MAX_FIELD_DIGITS) {
+    throw new Error(
+      `Gossip field ${field} claims ${value.length} digits, over the ${MAX_FIELD_DIGITS} limit`,
+    );
+  }
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`Gossip field ${field} is not a decimal integer`);
+  }
+
+  return BigInt(value);
+}
+
+function optionalBigInt(value: unknown, field: string): bigint | undefined {
+  return typeof value === 'string' && value.length > 0
+    ? safeBigInt(value, field)
+    : undefined;
 }
 
 function concat(parts: readonly Uint8Array[]): Uint8Array {

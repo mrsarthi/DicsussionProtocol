@@ -10,7 +10,7 @@
  * some size moved between two peers.
  */
 
-import { decryptFromPeer, encryptForPeer } from '@dicsussion/core/crypto';
+import { decrypt, encrypt } from '@dicsussion/core/crypto';
 import { deserializeEnvelope, serializeEnvelope } from '@dicsussion/core/crypto';
 import type { SecurityEnvelope } from '@dicsussion/core/crypto';
 import { PROTOCOL_VERSION } from '@dicsussion/core/crypto';
@@ -149,16 +149,17 @@ export function decodePayload(bytes: Uint8Array): MessagePayload {
  * otherwise leak the conversation to an on-path observer.
  *
  * @param payload The plaintext message.
- * @param recipientEncryptionKey Recipient's 32-byte X25519 public key.
+ * @param sessionKey The connection's forward-secret session key
+ *   (RFC 001 §5.1), not a long-term identity key.
  * @param epoch The 10-second epoch this message belongs to.
  * @returns Serialised envelope bytes for Stream `0x02`.
  */
 export function sealMessage(
   payload: MessagePayload,
-  recipientEncryptionKey: Uint8Array,
+  sessionKey: Uint8Array,
   epoch: number,
 ): Uint8Array {
-  const encrypted = encryptForPeer(encodePayload(payload), recipientEncryptionKey);
+  const encrypted = encrypt(encodePayload(payload), sessionKey);
 
   const envelope: SecurityEnvelope = {
     version: PROTOCOL_VERSION,
@@ -166,7 +167,10 @@ export function sealMessage(
     tierThreshold: 0,
     rlnNullifier: new Uint8Array(32),
     zkProof: new Uint8Array(0),
-    ephemeralPubkey: encrypted.ephemeralPubkey,
+    // Reserved. Sealing now uses the connection's forward-secret session
+    // key, so there is no per-message ephemeral half to publish; the
+    // field stays in the layout so the wire format is unchanged.
+    ephemeralPubkey: new Uint8Array(32),
     nonce: encrypted.nonce,
     ciphertext: encrypted.ciphertext,
   };
@@ -185,23 +189,16 @@ export interface OpenedMessage {
  * Decrypt an inbound Stream `0x02` envelope.
  *
  * @param bytes Raw envelope bytes off the wire.
- * @param myEncryptionSecret Our 32-byte X25519 private key.
+ * @param sessionKey The connection's forward-secret session key.
  * @throws If the envelope is malformed or authentication fails.
  */
 export function openMessage(
   bytes: Uint8Array,
-  myEncryptionSecret: Uint8Array,
+  sessionKey: Uint8Array,
 ): OpenedMessage {
   const envelope = deserializeEnvelope(bytes);
 
-  const plaintext = decryptFromPeer(
-    {
-      ciphertext: envelope.ciphertext,
-      nonce: envelope.nonce,
-      ephemeralPubkey: envelope.ephemeralPubkey,
-    },
-    myEncryptionSecret,
-  );
+  const plaintext = decrypt(envelope.ciphertext, envelope.nonce, sessionKey);
 
   return {
     payload: decodePayload(plaintext),

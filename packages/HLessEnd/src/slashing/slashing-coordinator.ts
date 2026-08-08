@@ -106,26 +106,21 @@ export class SlashingCoordinator {
   }
 
   /**
-   * Gossip a voluntary revocation authored by this node.
+   * Apply a voluntary revocation authored by this node — locally only.
    *
-   * Applied locally first so the identity is retired even if every send
-   * fails — a half-broadcast revocation must not leave the holder still
-   * counting themselves as active.
+   * **Deliberately not gossiped.** A `USER_REVOKED` tombstone proves
+   * nothing about who owns the commitment it names, so peers reject it
+   * (`verifyTombstone` → `unprovable-ownership`). Broadcasting it would
+   * be noise at best; honouring it would be an authorization bypass,
+   * since commitments are public and anyone could revoke anyone.
+   *
+   * To make peers stop counting this identity as a member, leave the
+   * channels — `GroupService.leaveGroup` announces a departure bound to
+   * this node's did:key, which *is* verifiable.
    */
-  async publishUserRevocation(tombstone: RevocationTombstone): Promise<void> {
-    if (!verifyTombstone(tombstone).valid) {
-      throw new Error('Refusing to gossip an unverifiable revocation');
-    }
-
+  async applyLocalRevocation(tombstone: RevocationTombstone): Promise<void> {
     this.revoked.add(tombstone.membershipCommitment);
     await this.deps.onRevoked(tombstone);
-
-    const frame = encodeTombstone(tombstone);
-    await Promise.all(
-      Array.from(this.deps.connections(), (connection) =>
-        connection.send(StreamType.REVOCATION_GOSSIP, frame),
-      ),
-    );
 
     for (const handler of this.handlers) {
       handler({ tombstone, evidence: undefined, local: true });

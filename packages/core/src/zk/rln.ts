@@ -121,6 +121,19 @@ export function isEpochFresh(
   currentEpochValue: number,
   maxAgeEpochs = 2,
 ): boolean {
+  // `proofEpoch` arrives from a peer. A value beyond 2^53 cannot be held
+  // exactly by a JS number, so arithmetic on it silently loses low bits
+  // — two distinct epochs could compare equal, which is exactly the
+  // collision the nullifier scheme relies on not happening. Reject
+  // rather than compute on a number that no longer means what it says.
+  if (
+    !Number.isSafeInteger(proofEpoch) ||
+    !Number.isSafeInteger(currentEpochValue) ||
+    proofEpoch < 0
+  ) {
+    return false;
+  }
+
   const age = currentEpochValue - proofEpoch;
   // Future-dated proofs are rejected too — a skewed or lying clock must
   // not buy extra quota.

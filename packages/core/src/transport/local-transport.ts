@@ -21,6 +21,9 @@ import {
   clearNonceRegistry,
   createHandshakeAck,
   createHandshakeInit,
+  deriveSessionKey,
+  HandshakeTag,
+  transcriptFor,
   processHandshakeInit,
   verifyHandshakeAck,
   verifyHandshakeChallenge,
@@ -48,6 +51,7 @@ class LocalConnection implements IConnection {
   constructor(
     public readonly peerDid: string,
     public readonly clockOffset: number,
+    public readonly sessionKey: Uint8Array,
     private readonly remoteSend: (frame: Uint8Array) => void,
   ) {
     this._state = ConnectionState.Active;
@@ -166,28 +170,50 @@ export class LocalTransport implements ITransport {
 
     // Perform handshake
     const localTime = Math.floor(Date.now() / 1000) + this.clockOffsetS;
-    const init = createHandshakeInit(this.keypair, this.didKey, localTime);
+    const { init, ephemeralSecret } = createHandshakeInit(
+      this.keypair,
+      this.didKey,
+      localTime,
+    );
 
     const remoteTime = Math.floor(Date.now() / 1000) + remote.clockOffsetS;
-    const { challenge, clockOffset } = processHandshakeInit(
+    const { challenge, clockOffset, sessionKey } = processHandshakeInit(
       init,
       remote.keypair,
       remoteTime,
     );
 
-    // Verify challenge: responder signed our nonce
+    // The transcript binds both identities, both nonces and both
+    // ephemerals, so a signature can only ever validate for the pair it
+    // was made for.
+    const context = {
+      initiatorDid: this.didKey,
+      responderDid: ticket.didKey,
+      initiatorNonce: init.nonce,
+      responderNonce: challenge.nonce,
+      initiatorEphemeral: init.ephemeralKey,
+      responderEphemeral: challenge.ephemeralKey,
+    };
+
     const remotePublicKey = remote.keypair.publicKey;
-    if (!verifyHandshakeChallenge(challenge, remotePublicKey, init.nonce)) {
+    if (!verifyHandshakeChallenge(challenge, remotePublicKey, context)) {
       throw new Error('Handshake challenge verification failed');
     }
 
-    // Send ack: sign responder's nonce
-    const ack = createHandshakeAck(this.keypair, challenge.nonce);
+    const ack = createHandshakeAck(this.keypair, context);
 
-    // Responder verifies ack
-    if (!verifyHandshakeAck(ack, this.keypair.publicKey, challenge.nonce)) {
+    if (!verifyHandshakeAck(ack, this.keypair.publicKey, context)) {
       throw new Error('Handshake ack verification failed');
     }
+
+    // Both sides now hold the same session key. The initiator's
+    // ephemeral secret has done its work and is wiped.
+    const initiatorSessionKey = deriveSessionKey(
+      ephemeralSecret,
+      challenge.ephemeralKey,
+      transcriptFor(HandshakeTag.ACK, context),
+    );
+    ephemeralSecret.fill(0);
 
     // Create bidirectional connection pair
     let remoteConnection: LocalConnection;
@@ -195,6 +221,7 @@ export class LocalTransport implements ITransport {
     const localConnection = new LocalConnection(
       ticket.didKey,
       clockOffset,
+      initiatorSessionKey,
       (frameBytes: Uint8Array) => {
         // Asynchronous delivery to remote
         setImmediate(() => {
@@ -206,6 +233,7 @@ export class LocalTransport implements ITransport {
     remoteConnection = new LocalConnection(
       this.didKey,
       -clockOffset,
+      sessionKey,
       (frameBytes: Uint8Array) => {
         // Asynchronous delivery to local
         setImmediate(() => {

@@ -48,6 +48,16 @@ export const HEADER_SIZE = 12;
 /** Maximum LZ4 decompressed payload size (1 MB). */
 export const MAX_DECOMPRESSED_SIZE = 1_048_576;
 
+/**
+ * Largest payload a single frame may declare, compressed or not.
+ *
+ * `payloadLen` is a u32 chosen by the sender, so without a ceiling a
+ * peer can claim a 4 GB frame and make a reassembling reader buffer
+ * toward it. Sized to match the decompression limit — no legitimate
+ * frame is larger, and a compressed one is smaller still.
+ */
+export const MAX_FRAME_PAYLOAD = 1_048_576;
+
 /** Handshake timeout in milliseconds. */
 export const HANDSHAKE_TIMEOUT_MS = 5_000;
 
@@ -135,17 +145,36 @@ export interface HandshakeInit {
   readonly didKey: string;
   /** 32-byte cryptographically secure random nonce. */
   readonly nonce: Uint8Array;
+  /**
+   * Initiator's ephemeral X25519 public key (RFC 001 §5.1).
+   *
+   * The secret half never leaves the initiator and is discarded when the
+   * connection closes. Together with the responder's ephemeral it forms
+   * the session key, which is what gives forward secrecy: once both
+   * halves are gone, no later compromise of a long-term key can recover
+   * the traffic.
+   */
+  readonly ephemeralKey: Uint8Array;
 }
 
 export interface HandshakeChallenge {
   /** Responder's 32-byte nonce. */
   readonly nonce: Uint8Array;
-  /** Responder's Ed25519 signature over the initiator's nonce. */
+  /** Responder's ephemeral X25519 public key. */
+  readonly ephemeralKey: Uint8Array;
+  /**
+   * Responder's Ed25519 signature over the handshake transcript.
+   *
+   * Covers both ephemeral keys, not just the nonce. An unsigned
+   * ephemeral is the classic unauthenticated-DH hole: an on-path
+   * attacker substitutes its own key and reads everything, with both
+   * sides believing the handshake succeeded.
+   */
   readonly signature: Uint8Array;
 }
 
 export interface HandshakeAck {
-  /** Initiator's Ed25519 signature over the responder's nonce. */
+  /** Initiator's Ed25519 signature over the handshake transcript. */
   readonly signature: Uint8Array;
 }
 

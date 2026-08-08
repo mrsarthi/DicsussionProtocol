@@ -29,6 +29,16 @@ export interface IConnection {
   readonly state: ConnectionState;
 
   /**
+   * Forward-secret key for this session (RFC 001 §5.1).
+   *
+   * Derived from both peers' ephemeral X25519 halves during the
+   * handshake, and valid only for this connection. Both secrets are
+   * wiped once it exists, so traffic sealed under it stays unreadable
+   * even if both long-term identity keys are later compromised.
+   */
+  readonly sessionKey: Uint8Array;
+
+  /**
    * Send a payload on a specific sub-stream.
    *
    * Frames are queued with priority banding: Stream `0x03` and any frame

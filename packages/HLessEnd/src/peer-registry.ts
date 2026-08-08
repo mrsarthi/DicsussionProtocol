@@ -17,6 +17,17 @@ export interface PeerRecord {
   readonly did: string;
   /** Peer's 32-byte X25519 public key for E2EE key agreement. */
   readonly encryptionKey: Uint8Array;
+  /**
+   * Whether this peer was paired out of band (RFC 001 §3.3).
+   *
+   * **This is an authorization boundary, not a cache flag.** Only paired
+   * peers receive message traffic. An inbound dialer is recorded here so
+   * its connection can be tracked, but anyone can complete a handshake —
+   * the did:key in a `HandshakeInit` is self-asserted, so a stranger with
+   * a freshly generated keypair looks exactly like a friend. Pairing is
+   * what distinguishes them.
+   */
+  readonly paired: boolean;
   /** Live connection, or undefined when not connected. */
   readonly connection?: IConnection;
 }
@@ -57,8 +68,32 @@ export class PeerRegistry {
     this.peers.set(did, {
       did,
       encryptionKey: encryptionKey.slice(),
+      // Reaching this method *is* the pairing act — the key came from a
+      // ticket or an explicit application call, not from the wire.
+      paired: true,
       connection: existing?.connection,
     });
+  }
+
+  /**
+   * Record an inbound peer that has not been paired.
+   *
+   * Needed so the connection can be tracked and CRDT sync can proceed,
+   * but the peer receives no message traffic until `addPeer` runs.
+   */
+  addUnpairedPeer(did: string): void {
+    if (this.peers.has(did)) return;
+
+    this.peers.set(did, {
+      did,
+      encryptionKey: new Uint8Array(32),
+      paired: false,
+    });
+  }
+
+  /** Peers that were paired out of band and are currently connected. */
+  listPairedConnected(): PeerRecord[] {
+    return this.listConnected().filter((peer) => peer.paired);
   }
 
   /** Bind a live connection to a known peer. */
@@ -77,9 +112,12 @@ export class PeerRegistry {
     const existing = this.peers.get(did);
     if (!existing) return;
 
+    // Pairing survives disconnection — it is a decision the application
+    // made, not a property of the transport.
     this.peers.set(did, {
       did: existing.did,
       encryptionKey: existing.encryptionKey,
+      paired: existing.paired,
     });
   }
 

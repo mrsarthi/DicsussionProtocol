@@ -8,6 +8,7 @@
  */
 
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { expect, test } from '@playwright/test';
@@ -17,7 +18,7 @@ import { DicsussionClient } from '../../packages/HLessEnd/src/client.js';
 import { SecretBox } from '../../packages/HLessEnd/src/storage/secret-box.js';
 
 function testDbPath(): string {
-  return join(process.cwd(), `test-secretbox-${crypto.randomUUID()}.db`);
+  return join(tmpdir(), `test-secretbox-${crypto.randomUUID()}.db`);
 }
 
 function cleanupDb(dbPath: string): void {

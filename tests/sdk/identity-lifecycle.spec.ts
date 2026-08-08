@@ -227,7 +227,12 @@ test.describe('SDK — Key Revocation', () => {
     }
   });
 
-  test('a peer receiving the revocation applies it', async () => {
+  test('a peer does NOT honour a voluntary revocation from the wire', async () => {
+    // A USER_REVOKED tombstone proves only that *someone* signed those
+    // bytes — never that they hold the identity secret behind the
+    // commitment named inside. Commitments are public (MEMBER_LIST
+    // gossips them), so honouring this would let anyone permanently
+    // revoke anyone. Alice retires locally; Bob is unmoved.
     const alice = await DicsussionClient.init({ storagePath: ':memory:' });
     const bob = await DicsussionClient.init({ storagePath: ':memory:' });
 
@@ -239,9 +244,11 @@ test.describe('SDK — Key Revocation', () => {
       const commitment = alice.identityCommitment;
       await alice.identity.revokeKey();
 
-      // Bob verifies the tombstone before honouring it.
-      const applied = await waitFor(() => bob.isRevoked(commitment));
-      expect(applied).toBe(true);
+      expect(alice.isRevoked(commitment)).toBe(true);
+
+      // Give any (incorrect) gossip time to arrive and be applied.
+      await new Promise((r) => setTimeout(r, 300));
+      expect(bob.isRevoked(commitment)).toBe(false);
     } finally {
       await alice.disconnect();
       await bob.disconnect();

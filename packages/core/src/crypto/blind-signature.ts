@@ -56,7 +56,24 @@ export interface BlindedMessage {
   readonly blindingFactor: bigint;
 }
 
-/** Modular exponentiation by square-and-multiply. */
+/**
+ * Modular exponentiation by square-and-multiply.
+ *
+ * **Not constant-time.** The loop branches on the bits of the exponent,
+ * so timing and cache behaviour leak information about it — the classic
+ * RSA side-channel.
+ *
+ * Accepted here because of where this runs: `blindSign` executes on the
+ * issuer's own device, against a value the issuer chose, with no remote
+ * party able to time it. The one exponentiation an attacker *can*
+ * influence is `verifyBlindSignature`, which uses only the public
+ * exponent `e` — nothing secret to leak.
+ *
+ * This assumption breaks the moment signing moves to a server, or an
+ * attacker can measure local execution (a shared host, a malicious
+ * co-resident process). Either change means replacing this with a
+ * constant-time ladder.
+ */
 export function modPow(base: bigint, exponent: bigint, modulus: bigint): bigint {
   if (modulus === 1n) return 0n;
 

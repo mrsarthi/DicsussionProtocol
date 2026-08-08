@@ -39,6 +39,9 @@ const STORAGE_KEY_INFO = 'dicsussion/storage-at-rest/v1';
  * which case values pass through unchanged.
  */
 export class SecretBox {
+  /** Warn once per process, not once per secret. */
+  private static unencryptedWarned = false;
+
   private readonly key: Uint8Array | null;
 
   /**
@@ -54,6 +57,25 @@ export class SecretBox {
   }
 
   /**
+   * Warn once that secrets are being written in the clear.
+   *
+   * Passthrough is legitimate in development, but silence here is how an
+   * application ships having simply forgotten `storageKey` — the data
+   * looks fine, the API behaves identically, and identity secrets sit on
+   * disk unprotected. Warning once keeps it visible without flooding.
+   */
+  private warnUnencrypted(): void {
+    if (SecretBox.unencryptedWarned) return;
+    SecretBox.unencryptedWarned = true;
+
+    console.warn(
+      '[dicsussion] Secrets are being stored UNENCRYPTED. Pass ' +
+        '`storageKey` to DicsussionClient.init() to enable encryption at ' +
+        'rest (RFC 004 §4.1). This is acceptable only in development.',
+    );
+  }
+
+  /**
    * Encrypt a secret value for storage.
    *
    * @param plaintext The value to protect.
@@ -61,7 +83,10 @@ export class SecretBox {
    *   input unchanged when encryption is disabled.
    */
   seal(plaintext: string): string {
-    if (!this.key) return plaintext;
+    if (!this.key) {
+      this.warnUnencrypted();
+      return plaintext;
+    }
 
     const { ciphertext, nonce } = encrypt(
       new TextEncoder().encode(plaintext),

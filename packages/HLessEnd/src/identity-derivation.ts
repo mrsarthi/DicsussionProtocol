@@ -87,33 +87,46 @@ export function deriveIdentity(mnemonic: string): DerivedIdentity {
 
   const seed = mnemonicToSeedSync(phrase);
 
-  const signingSecret = derive(seed, LABEL.signing, 32);
-  const encryptionSecret = derive(seed, LABEL.encryption, 32);
+  try {
+    const signingSecret = derive(seed, LABEL.signing, 32);
+    const encryptionSecret = derive(seed, LABEL.encryption, 32);
 
-  const signing: Ed25519KeyPair = {
-    secretKey: signingSecret,
-    publicKey: ed25519.getPublicKey(signingSecret),
-  };
-  const encryption: KeyPair = {
-    secretKey: encryptionSecret,
-    publicKey: x25519.getPublicKey(encryptionSecret),
-  };
+    const signing: Ed25519KeyPair = {
+      secretKey: signingSecret,
+      publicKey: ed25519.getPublicKey(signingSecret),
+    };
+    const encryption: KeyPair = {
+      secretKey: encryptionSecret,
+      publicKey: x25519.getPublicKey(encryptionSecret),
+    };
 
-  const identitySecret = deriveFieldElement(seed, LABEL.rlnSecret);
+    const identitySecret = deriveFieldElement(seed, LABEL.rlnSecret);
 
-  // Derived from the secret, not independently: a peer who recovers
-  // `a_0` by slashing must be able to compute `cm_identity`, and could
-  // never know independent randomness. See `deriveTrapdoor`.
-  const trapdoor = deriveTrapdoor(identitySecret);
+    // Derived from the secret, not independently: a peer who recovers
+    // `a_0` by slashing must be able to compute `cm_identity`, and could
+    // never know independent randomness. See `deriveTrapdoor`.
+    const trapdoor = deriveTrapdoor(identitySecret);
 
-  return {
-    did: publicKeyToDidKey(signing.publicKey),
-    signing,
-    encryption,
-    identitySecret,
-    trapdoor,
-    commitment: membershipCommitment(identitySecret, trapdoor),
-  };
+    return {
+      did: publicKeyToDidKey(signing.publicKey),
+      signing,
+      encryption,
+      identitySecret,
+      trapdoor,
+      commitment: membershipCommitment(identitySecret, trapdoor),
+    };
+  } finally {
+    // The 64-byte BIP-39 seed regenerates *every* key here, so it is the
+    // single most valuable secret in the process — and unlike the keys
+    // themselves it has no further use once derivation is done.
+    //
+    // JavaScript offers no guaranteed erasure: the GC may already have
+    // copied this buffer, and strings are immutable. Overwriting still
+    // removes the longest-lived copy, which is the one a heap dump or a
+    // swapped page is most likely to catch. Partial mitigation, worth
+    // its two lines.
+    seed.fill(0);
+  }
 }
 
 /** HKDF-expand the seed under a label. */

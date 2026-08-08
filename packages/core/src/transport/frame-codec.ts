@@ -20,7 +20,7 @@ import {
   type StreamTypeValue,
   FrameFlags,
   HEADER_SIZE,
-  MAX_DECOMPRESSED_SIZE,
+  MAX_FRAME_PAYLOAD,
   PROTOCOL_MAGIC,
   TransportError,
   TransportException,
@@ -123,6 +123,16 @@ export function decodeFrameHeader(buffer: Uint8Array): FrameHeader {
 export function decodeFrame(buffer: Uint8Array): Frame {
   const header = decodeFrameHeader(buffer);
 
+  // `payloadLen` is a u32 the sender chooses, so it is bounded before it
+  // is used to size anything. Without this a peer can claim a 4 GB frame
+  // and make a reassembling reader buffer toward it.
+  if (header.payloadLen > MAX_FRAME_PAYLOAD) {
+    throw new TransportException(
+      TransportError.BufferOverrun,
+      `Frame claims ${header.payloadLen} bytes, over the ${MAX_FRAME_PAYLOAD}-byte limit`,
+    );
+  }
+
   const totalRequired = HEADER_SIZE + header.payloadLen;
   if (buffer.length < totalRequired) {
     throw new TransportException(
@@ -143,14 +153,15 @@ export function decodeFrame(buffer: Uint8Array): Frame {
     );
   }
 
-  // Check LZ4 decompression bomb limit
-  if ((header.flags & FrameFlags.COMPRESSED) !== 0 && header.payloadLen > MAX_DECOMPRESSED_SIZE) {
-    throw new TransportException(
-      TransportError.DecompressionBomb,
-      `Compressed payload exceeds 1MB limit: ${header.payloadLen} bytes`,
-    );
-  }
-
+  // NOTE: there is deliberately no decompression-bomb check here.
+  //
+  // The obvious one — comparing `payloadLen` against the *decompressed*
+  // ceiling — measures the wrong quantity: a 100 KB compressed payload
+  // that expands to 100 MB passes it. It read as protection while
+  // providing none, which is worse than nothing.
+  //
+  // The real check is in `decompressPayload`, against the actual output
+  // length, and `MAX_FRAME_PAYLOAD` above bounds the compressed side.
   return { header, payload };
 }
 

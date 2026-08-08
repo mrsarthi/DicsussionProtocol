@@ -170,7 +170,6 @@ export class DicsussionClient {
       peers: this.peers,
       syncEngine: this.syncEngine,
       membershipSync: this.membershipSync,
-      getEncryptionSecret: () => this.requireIdentity().encryption.secretKey,
       onMessage: async (payload) => {
         await this.chat.ingestRemote(payload);
       },
@@ -203,6 +202,8 @@ export class DicsussionClient {
     config: ClientConfig = {},
     runtime: ClientRuntimeOptions = {},
   ): Promise<DicsussionClient> {
+    assertCryptoAvailable();
+
     const client = new DicsussionClient(config, runtime);
     await client.bootstrapInternalEngine();
 
@@ -590,10 +591,12 @@ export class DicsussionClient {
       this.config.storageKey.length > 0 ? this.config.storageKey : undefined,
     );
 
-    // Voluntary revocations gossip on the same priority stream as
-    // slashing tombstones (RFC 003 §7).
+    // Voluntary revocation is applied locally and never gossiped: a
+    // USER_REVOKED tombstone carries no proof that its signer owns the
+    // commitment it names, so peers reject it. Broadcasting one that
+    // peers honour would let anyone revoke anyone (RFC 003 §7.1).
     this.identity.attachRevocationPublisher(async (tombstone) => {
-      await this.slashing?.publishUserRevocation(tombstone);
+      await this.slashing?.applyLocalRevocation(tombstone);
     });
 
     this.transport = await initTransport(
@@ -847,5 +850,42 @@ export class DicsussionClient {
       throw new Error('Client transport is not initialised');
     }
     return this.transport;
+  }
+}
+
+/**
+ * Fail fast when the platform has no Web Crypto.
+ *
+ * Browsers expose `crypto.getRandomValues` and `crypto.subtle` only in a
+ * Secure Context — HTTPS or localhost. Served over plain HTTP,
+ * `crypto.subtle` is simply `undefined`, and the first failure would
+ * otherwise surface deep inside key generation as a confusing type
+ * error, long after the real cause.
+ *
+ * Every key this SDK produces depends on these, so there is no degraded
+ * mode worth offering.
+ */
+function assertCryptoAvailable(): void {
+  // Typed structurally: the DOM lib is deliberately not in scope (see
+  // `indexeddb-driver.ts`), so `Crypto` is not a known global name here.
+  const webCrypto = (
+    globalThis as {
+      crypto?: { getRandomValues?: unknown; subtle?: unknown };
+    }
+  ).crypto;
+
+  if (typeof webCrypto?.getRandomValues !== 'function') {
+    throw new Error(
+      'No Web Crypto available. In a browser this means the page is not a ' +
+        'Secure Context — serve it over HTTPS or from localhost.',
+    );
+  }
+
+  if (!webCrypto.subtle) {
+    throw new Error(
+      'crypto.subtle is unavailable. In a browser this means the page is ' +
+        'not a Secure Context — serve it over HTTPS or from localhost. ' +
+        'Identity keys cannot be generated without it.',
+    );
   }
 }

@@ -11,9 +11,12 @@
  */
 
 
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { ed25519, x25519 } from '@noble/curves/ed25519.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 import type { Ed25519KeyPair } from './did-key.js';
+import { publicKeyToDidKey } from './did-key.js';
 import type { HandshakeAck, HandshakeChallenge, HandshakeInit } from './types.js';
 import {
   EPOCH_DURATION_S,
@@ -25,6 +28,145 @@ import {
 
 /** Nonce replay tracker: maps nonce hex → timestamp of receipt. */
 const nonceRegistry = new Map<string, number>();
+
+/**
+ * Hard ceiling on tracked nonces.
+ *
+ * Entries live for `NONCE_EXPIRY_S` (5 minutes) and are pruned only when
+ * a handshake arrives, so an attacker sending inits at line rate could
+ * otherwise grow this without bound for the whole window. At 20k entries
+ * (~1.5 MB of keys) the oldest are evicted instead.
+ *
+ * Evicting early slightly weakens replay protection for the dropped
+ * nonces — but a peer that can flood 20k handshakes in five minutes can
+ * simply replay in real time anyway, and unbounded memory is the worse
+ * failure.
+ */
+const MAX_TRACKED_NONCES = 20_000;
+
+const encoder = new TextEncoder();
+
+/** Domain separation for the per-session message key. */
+const SESSION_KEY_LABEL = encoder.encode('dicsussion/session-key/v1');
+
+/** Distinguishes the two signatures so neither can be replayed as the other. */
+const TRANSCRIPT_TAG = { CHALLENGE: 0x01, ACK: 0x02 } as const;
+
+/**
+ * The bytes both sides sign, and the value the session key is bound to.
+ *
+ * Everything that identifies this exchange goes in: **both did:keys,
+ * both nonces, both ephemeral keys**, under a domain label and a
+ * per-message tag.
+ *
+ * Signing only the nonce would leave the ephemerals unauthenticated —
+ * an on-path attacker could swap in its own and read the session. But
+ * signing the ephemerals alone is not enough either: without the
+ * identities, the agreed key is not bound to *who* agreed it, which
+ * permits an unknown-key-share. An attacker M who is a known peer of V
+ * can relay V's ephemeral to T under V's name, forward V's ack, and
+ * leave T sharing a key with V while V believes it is talking to M.
+ * Neither signature would have covered the discrepancy.
+ *
+ * Length-prefixing each field keeps the encoding unambiguous — without
+ * it, adjacent variable-length values could be re-split to produce the
+ * same bytes from different inputs.
+ */
+function transcript(
+  tag: number,
+  initiatorDid: string,
+  responderDid: string,
+  initiatorNonce: Uint8Array,
+  responderNonce: Uint8Array,
+  initiatorEphemeral: Uint8Array,
+  responderEphemeral: Uint8Array,
+): Uint8Array {
+  const parts: Uint8Array[] = [
+    encoder.encode('dicsussion/handshake/v1'),
+    new Uint8Array([tag]),
+    encoder.encode(initiatorDid),
+    encoder.encode(responderDid),
+    initiatorNonce,
+    responderNonce,
+    initiatorEphemeral,
+    responderEphemeral,
+  ];
+
+  const total = parts.reduce((sum, part) => sum + 4 + part.length, 0);
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+
+  let offset = 0;
+  for (const part of parts) {
+    view.setUint32(offset, part.length, false);
+    offset += 4;
+    out.set(part, offset);
+    offset += part.length;
+  }
+
+  return out;
+}
+
+/**
+ * Everything that identifies one handshake.
+ *
+ * Passed as a unit so no caller can accidentally bind a signature to a
+ * subset of it — omitting a field is exactly how the unknown-key-share
+ * above became possible.
+ */
+export interface HandshakeContext {
+  readonly initiatorDid: string;
+  readonly responderDid: string;
+  readonly initiatorNonce: Uint8Array;
+  readonly responderNonce: Uint8Array;
+  readonly initiatorEphemeral: Uint8Array;
+  readonly responderEphemeral: Uint8Array;
+}
+
+/** Build the transcript for one message type from a context. */
+export function transcriptFor(
+  tag: number,
+  context: HandshakeContext,
+): Uint8Array {
+  return transcript(
+    tag,
+    context.initiatorDid,
+    context.responderDid,
+    context.initiatorNonce,
+    context.responderNonce,
+    context.initiatorEphemeral,
+    context.responderEphemeral,
+  );
+}
+
+/** Tag values, exported so transports can build the ACK-bound key. */
+export const HandshakeTag = TRANSCRIPT_TAG;
+
+/**
+ * Derive the session message key from the two ephemeral halves.
+ *
+ * This is the whole forward-secrecy story: the key exists only while
+ * both secrets do. Discard them at close and the session's traffic is
+ * unrecoverable, even to someone who later steals both long-term keys.
+ */
+export function deriveSessionKey(
+  myEphemeralSecret: Uint8Array,
+  theirEphemeralPublic: Uint8Array,
+  boundTranscript: Uint8Array,
+): Uint8Array {
+  const shared = x25519.getSharedSecret(myEphemeralSecret, theirEphemeralPublic);
+
+  // The transcript goes into `info`, so the key itself — not merely the
+  // signatures over it — is bound to the identity pair. Two peers who
+  // disagree about who they are talking to derive different keys and
+  // simply fail to communicate, rather than sharing a key under a
+  // mistaken belief about the counterparty.
+  const info = new Uint8Array(SESSION_KEY_LABEL.length + boundTranscript.length);
+  info.set(SESSION_KEY_LABEL, 0);
+  info.set(boundTranscript, SESSION_KEY_LABEL.length);
+
+  return hkdf(sha256, shared, undefined, info, 32);
+}
 
 /** Convert Uint8Array to hex string for map key. */
 function toHex(bytes: Uint8Array): string {
@@ -42,6 +184,17 @@ function pruneExpiredNonces(nowS: number): void {
       nonceRegistry.delete(key);
     }
   }
+
+  // Map iterates in insertion order, so the front is the oldest.
+  if (nonceRegistry.size > MAX_TRACKED_NONCES) {
+    const excess = nonceRegistry.size - MAX_TRACKED_NONCES;
+    let dropped = 0;
+
+    for (const key of nonceRegistry.keys()) {
+      nonceRegistry.delete(key);
+      if (++dropped >= excess) break;
+    }
+  }
 }
 
 /**
@@ -55,13 +208,21 @@ export function createHandshakeInit(
   keypair: Ed25519KeyPair,
   didKey: string,
   timestampS?: number,
-): HandshakeInit {
+): { init: HandshakeInit; ephemeralSecret: Uint8Array } {
   void keypair; // keypair used for later signing, included for API consistency
   const nonce = new Uint8Array(32);
   globalThis.crypto.getRandomValues(nonce);
   const timestamp = timestampS ?? Math.floor(Date.now() / 1000);
 
-  return { timestamp, didKey, nonce };
+  // The secret half is returned to the caller, never sent. It lives as
+  // long as the connection and no longer.
+  const ephemeralSecret = x25519.utils.randomSecretKey();
+  const ephemeralKey = x25519.getPublicKey(ephemeralSecret);
+
+  return {
+    init: { timestamp, didKey, nonce, ephemeralKey },
+    ephemeralSecret,
+  };
 }
 
 /**
@@ -81,7 +242,7 @@ export function processHandshakeInit(
   init: HandshakeInit,
   responderKeypair: Ed25519KeyPair,
   localTimestampS?: number,
-): { challenge: HandshakeChallenge; clockOffset: number } {
+): { challenge: HandshakeChallenge; clockOffset: number; sessionKey: Uint8Array } {
   const localTime = localTimestampS ?? Math.floor(Date.now() / 1000);
   const clockOffset = calculateClockOffset(init.timestamp, localTime);
 
@@ -102,7 +263,21 @@ export function processHandshakeInit(
     );
   }
 
-  // Check nonce replay
+  // Check nonce replay.
+  //
+  // The check and the insert are deliberately adjacent and synchronous.
+  // An `await` between them would open a genuine TOCTOU window: two
+  // copies of the same init could both pass `has()` before either
+  // reached `set()`. In a single-threaded runtime this sequence cannot
+  // interleave, so no lock is needed — but the property is easy to lose
+  // by making this function async later.
+  //
+  // A residual, accepted weakness: an on-path attacker who replays a
+  // captured init before the genuine one arrives burns that nonce, and
+  // the real handshake is then rejected as a replay. They cannot
+  // complete the handshake (the ack needs the initiator's key), and the
+  // initiator succeeds on retry with a fresh nonce. It is no escalation
+  // — an on-path attacker can already drop the packet outright.
   const nonceHex = toHex(init.nonce);
   pruneExpiredNonces(localTime);
 
@@ -114,17 +289,48 @@ export function processHandshakeInit(
   }
   nonceRegistry.set(nonceHex, localTime);
 
-  // Sign initiator's nonce with responder's key
-  const signature = ed25519.sign(init.nonce, responderKeypair.secretKey);
+  // Responder's ephemeral half. The secret is used once, here, to derive
+  // the session key and is then dropped — it is never stored.
+  const ephemeralSecret = x25519.utils.randomSecretKey();
+  const ephemeralKey = x25519.getPublicKey(ephemeralSecret);
 
-  // Generate responder's nonce
   const nonce = new Uint8Array(32);
   globalThis.crypto.getRandomValues(nonce);
 
-  return {
-    challenge: { nonce, signature },
-    clockOffset,
-  };
+  const responderDid = publicKeyToDidKey(responderKeypair.publicKey);
+  const bound = (tag: number): Uint8Array =>
+    transcript(
+      tag,
+      init.didKey,
+      responderDid,
+      init.nonce,
+      nonce,
+      init.ephemeralKey,
+      ephemeralKey,
+    );
+
+  const signature = ed25519.sign(
+    bound(TRANSCRIPT_TAG.CHALLENGE),
+    responderKeypair.secretKey,
+  );
+
+  try {
+    const sessionKey = deriveSessionKey(
+      ephemeralSecret,
+      init.ephemeralKey,
+      bound(TRANSCRIPT_TAG.ACK),
+    );
+
+    return {
+      challenge: { nonce, ephemeralKey, signature },
+      clockOffset,
+      sessionKey,
+    };
+  } finally {
+    // Wiped on every path, including a low-order peer key that makes
+    // the exchange throw.
+    ephemeralSecret.fill(0);
+  }
 }
 
 /**
@@ -135,10 +341,14 @@ export function processHandshakeInit(
  */
 export function createHandshakeAck(
   keypair: Ed25519KeyPair,
-  responderNonce: Uint8Array,
+  context: HandshakeContext,
 ): HandshakeAck {
-  const signature = ed25519.sign(responderNonce, keypair.secretKey);
-  return { signature };
+  return {
+    signature: ed25519.sign(
+      transcriptFor(TRANSCRIPT_TAG.ACK, context),
+      keypair.secretKey,
+    ),
+  };
 }
 
 /**
@@ -152,10 +362,14 @@ export function createHandshakeAck(
 export function verifyHandshakeAck(
   ack: HandshakeAck,
   peerPublicKey: Uint8Array,
-  expectedNonce: Uint8Array,
+  context: HandshakeContext,
 ): boolean {
   try {
-    return ed25519.verify(ack.signature, expectedNonce, peerPublicKey);
+    return ed25519.verify(
+      ack.signature,
+      transcriptFor(TRANSCRIPT_TAG.ACK, context),
+      peerPublicKey,
+    );
   } catch {
     return false;
   }
@@ -172,10 +386,14 @@ export function verifyHandshakeAck(
 export function verifyHandshakeChallenge(
   challenge: HandshakeChallenge,
   responderPublicKey: Uint8Array,
-  initiatorNonce: Uint8Array,
+  context: HandshakeContext,
 ): boolean {
   try {
-    return ed25519.verify(challenge.signature, initiatorNonce, responderPublicKey);
+    return ed25519.verify(
+      challenge.signature,
+      transcriptFor(TRANSCRIPT_TAG.CHALLENGE, context),
+      responderPublicKey,
+    );
   } catch {
     return false;
   }

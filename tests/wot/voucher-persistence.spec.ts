@@ -9,6 +9,7 @@
  */
 
 import { existsSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { expect, test } from '@playwright/test';
@@ -22,7 +23,7 @@ import { createGenesisAnchor } from '../../packages/HLessEnd/src/wot/genesis-anc
 import { VoucherStore } from '../../packages/HLessEnd/src/wot/voucher-store.js';
 
 function testDbPath(): string {
-  return join(process.cwd(), `test-voucher-${crypto.randomUUID()}.db`);
+  return join(tmpdir(), `test-voucher-${crypto.randomUUID()}.db`);
 }
 
 function cleanupDb(dbPath: string): void {

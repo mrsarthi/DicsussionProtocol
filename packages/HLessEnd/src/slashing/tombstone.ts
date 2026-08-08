@@ -70,6 +70,7 @@ export interface RevocationTombstone {
 /** Why a tombstone was rejected. */
 export type TombstoneRejection =
   | 'bad-signature'
+  | 'unprovable-ownership'
   | 'missing-proof'
   | 'nullifier-mismatch'
   | 'duplicate-commitment'
@@ -168,9 +169,14 @@ export function createSlashingTombstone(
  * Build a voluntary revocation tombstone (`USER_REVOKED`).
  *
  * Unlike a slashing tombstone this carries no double-spend evidence —
- * there is no misconduct to prove. It is authenticated solely by the
- * holder's own signature, which is sufficient because the only identity
- * it can revoke is the signer's own.
+ * there is no misconduct to prove.
+ *
+ * **This tombstone is not verifiable by anyone else.** Its signature
+ * proves only that the signer produced these bytes, not that they own
+ * the commitment named inside, so `verifyTombstone` rejects it and peers
+ * will not honour it over the wire. It is useful only for applying a
+ * retirement locally; to make peers stop counting you as a member,
+ * announce a channel departure, which *is* bound to your did:key.
  *
  * @param commitment The `cm_identity` being retired.
  * @param holder The identity's own keypair and did:key.
@@ -217,10 +223,22 @@ export function verifyTombstone(tombstone: RevocationTombstone): TombstoneVerdic
     return { valid: false, reason: 'bad-signature' };
   }
 
-  // A voluntary revocation carries no cryptographic evidence beyond the
-  // signature, so verification stops here.
+  // A voluntary revocation carries no evidence binding the signer to the
+  // commitment it names, so it can never be verified from the wire.
+  //
+  // The signature proves only that *someone* signed these bytes. It does
+  // not prove they hold the identity secret behind `membershipCommitment`
+  // — and commitments are public, gossiped in MEMBER_LIST frames so peers
+  // can union their member sets. Accepting this would let anyone who has
+  // seen a commitment permanently revoke it, with no recovery.
+  //
+  // A sound version needs proof of knowledge of `a_0`. Publishing `a_0`
+  // itself would work but deanonymises every message the holder ever
+  // sent, since RLN nullifiers derive from it — a poor trade for
+  // retiring a key. Until that proof exists, voluntary revocation is a
+  // local action only (see `SlashingCoordinator.applyLocalRevocation`).
   if (tombstone.reason === RevocationReason.USER_REVOKED) {
-    return { valid: true };
+    return { valid: false, reason: 'unprovable-ownership' };
   }
 
   const proof = tombstone.doubleSpendProof;

@@ -33,5 +33,28 @@
   },
   "browser": {
     "./dist/storage/sqlite-driver.js": false
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrsarthi/DicsussionProtocol.git",
+    "directory": "packages/HLessEnd"
+  },
+  "homepage": "https://github.com/mrsarthi/DicsussionProtocol#readme",
+  "bugs": {
+    "url": "https://github.com/mrsarthi/DicsussionProtocol/issues"
+  },
+  "author": "Parth Sarthi Mishra",
+  "keywords": [
+    "p2p",
+    "e2ee",
+    "messaging",
+    "sdk",
+    "local-first",
+    "zero-knowledge",
+    "headless",
+    "decentralized"
+  ],
+  "engines": {
+    "node": ">=18"
   }
 }

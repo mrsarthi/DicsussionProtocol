@@ -57,5 +57,28 @@
     "./dist/transport/datagram-socket.js": false,
     "./dist/zk/prover.js": false,
     "./dist/zk/artifact-paths.js": false
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrsarthi/DicsussionProtocol.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/mrsarthi/DicsussionProtocol#readme",
+  "bugs": {
+    "url": "https://github.com/mrsarthi/DicsussionProtocol/issues"
+  },
+  "author": "Parth Sarthi Mishra",
+  "keywords": [
+    "p2p",
+    "e2ee",
+    "zero-knowledge",
+    "crdt",
+    "zk-snark",
+    "groth16",
+    "local-first",
+    "protocol"
+  ],
+  "engines": {
+    "node": ">=18"
   }
 }

@@ -27,6 +27,9 @@ import {
   calculateClockOffset,
   createHandshakeAck,
   createHandshakeInit,
+  deriveSessionKey,
+  HandshakeTag,
+  transcriptFor,
   processHandshakeInit,
   verifyHandshakeAck,
   verifyHandshakeChallenge,
@@ -109,6 +112,7 @@ class RelayConnection implements IConnection {
   constructor(
     public readonly peerDid: string,
     public readonly clockOffset: number,
+    public readonly sessionKey: Uint8Array,
     private readonly deliver: (bytes: Uint8Array) => void,
     private readonly onClose: (peerDid: string) => void,
   ) {}
@@ -299,7 +303,10 @@ export class WebSocketTransport implements ITransport {
     // Dialer side of the three-message handshake. The challenge is what
     // proves the far side holds the Ed25519 secret behind its did:key —
     // without it the relay could answer for any peer it likes.
-    const init = createHandshakeInit(this.options.identity, this.didKey);
+    const { init, ephemeralSecret } = createHandshakeInit(
+      this.options.identity,
+      this.didKey,
+    );
     this.sendControl(ticket.didKey, init);
 
     const { challenge, timestamp } = await this.readControl<ChallengeMessage>(
@@ -309,8 +316,18 @@ export class WebSocketTransport implements ITransport {
     // The ticket's nodeId is the did:key public half, so verifying the
     // challenge against it binds this relay session to the identity the
     // rest of the protocol trusts — not to whatever the relay claims.
-    if (!verifyHandshakeChallenge(challenge, ticket.nodeId, init.nonce)) {
+    const context = {
+      initiatorDid: this.didKey,
+      responderDid: ticket.didKey,
+      initiatorNonce: init.nonce,
+      responderNonce: challenge.nonce,
+      initiatorEphemeral: init.ephemeralKey,
+      responderEphemeral: challenge.ephemeralKey,
+    };
+
+    if (!verifyHandshakeChallenge(challenge, ticket.nodeId, context)) {
       this.sendEnvelope(RelayMessageType.CLOSED, ticket.didKey, EMPTY);
+      ephemeralSecret.fill(0);
       throw new Error(
         `Handshake with ${ticket.didKey} failed challenge verification`,
       );
@@ -318,12 +335,20 @@ export class WebSocketTransport implements ITransport {
 
     this.sendControl(
       ticket.didKey,
-      createHandshakeAck(this.options.identity, challenge.nonce),
+      createHandshakeAck(this.options.identity, context),
     );
+
+    const sessionKey = deriveSessionKey(
+      ephemeralSecret,
+      challenge.ephemeralKey,
+      transcriptFor(HandshakeTag.ACK, context),
+    );
+    ephemeralSecret.fill(0);
 
     return this.establish(
       ticket.didKey,
       calculateClockOffset(timestamp, init.timestamp),
+      sessionKey,
     );
   }
 
@@ -439,7 +464,7 @@ export class WebSocketTransport implements ITransport {
       }
 
       const localTimestamp = Math.floor(Date.now() / 1000);
-      const { challenge, clockOffset } = processHandshakeInit(
+      const { challenge, clockOffset, sessionKey } = processHandshakeInit(
         init,
         this.options.identity,
         localTimestamp,
@@ -447,14 +472,21 @@ export class WebSocketTransport implements ITransport {
       this.sendControl(peerDid, { challenge, timestamp: localTimestamp });
 
       const ack = await this.readControl<HandshakeAck>(peerDid);
-      if (
-        !verifyHandshakeAck(ack, didKeyToPublicKey(init.didKey), challenge.nonce)
-      ) {
+      const context = {
+        initiatorDid: init.didKey,
+        responderDid: this.didKey,
+        initiatorNonce: init.nonce,
+        responderNonce: challenge.nonce,
+        initiatorEphemeral: init.ephemeralKey,
+        responderEphemeral: challenge.ephemeralKey,
+      };
+
+      if (!verifyHandshakeAck(ack, didKeyToPublicKey(init.didKey), context)) {
         this.sendEnvelope(RelayMessageType.CLOSED, peerDid, EMPTY);
         return;
       }
 
-      const connection = this.establish(init.didKey, clockOffset);
+      const connection = this.establish(init.didKey, clockOffset, sessionKey);
 
       for (const handler of this.connectionHandlers) handler(connection);
     } catch {
@@ -464,10 +496,15 @@ export class WebSocketTransport implements ITransport {
     }
   }
 
-  private establish(peerDid: string, clockOffset: number): RelayConnection {
+  private establish(
+    peerDid: string,
+    clockOffset: number,
+    sessionKey: Uint8Array,
+  ): RelayConnection {
     const connection = new RelayConnection(
       peerDid,
       clockOffset,
+      sessionKey,
       (bytes) => this.sendEnvelope(RelayMessageType.DATA, peerDid, bytes),
       (did) => {
         this.connections.delete(did);

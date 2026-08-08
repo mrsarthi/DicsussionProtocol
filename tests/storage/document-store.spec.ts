@@ -1,4 +1,5 @@
 import { existsSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { expect, test } from '@playwright/test';
@@ -8,7 +9,7 @@ import { DocumentStore } from '../../packages/HLessEnd/src/storage/document-stor
 import { SQLiteDriver } from '../../packages/HLessEnd/src/storage/sqlite-driver.js';
 
 function testDbPath(): string {
-  return join(process.cwd(), `test-docstore-${crypto.randomUUID()}.db`);
+  return join(tmpdir(), `test-docstore-${crypto.randomUUID()}.db`);
 }
 
 function cleanupDb(dbPath: string): void {

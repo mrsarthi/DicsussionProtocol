@@ -93,6 +93,7 @@ export class IrohConnection implements IConnection {
     public readonly peerDid: string,
     public readonly clockOffset: number,
     private readonly connection: IrohConnectionHandle,
+    public readonly sessionKey: Uint8Array,
   ) {
     // 64 sub-stream readers plus application handlers; the default of 10
     // would warn spuriously.

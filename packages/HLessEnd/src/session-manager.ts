@@ -26,8 +26,6 @@ import type { PeerRegistry } from './peer-registry.js';
 export interface SessionManagerDeps {
   readonly peers: PeerRegistry;
   readonly syncEngine: CrdtSyncEngine;
-  /** Our X25519 private key, for opening inbound envelopes. */
-  readonly getEncryptionSecret: () => Uint8Array;
   /** Hand a decrypted message to the chat layer. */
   readonly onMessage: (payload: MessagePayload) => Promise<void>;
   /**
@@ -75,17 +73,19 @@ export class SessionManager {
   /**
    * Attach frame handling and sync state to a new connection.
    *
-   * An inbound peer may not have been paired yet, so it is recorded with
-   * a placeholder key. Messages are never encrypted to that placeholder
-   * — see `publish`.
+   * An inbound peer may not have been paired yet. It is recorded so its
+   * connection can be tracked and CRDT sync can proceed, but it receives
+   * no message traffic until the application pairs it — see `publish`.
    */
   registerConnection(connection: IConnection): void {
     const { peers, syncEngine } = this.deps;
     const peerDid = connection.peerDid;
 
-    if (!peers.getPeer(peerDid)) {
-      peers.addPeer(peerDid, new Uint8Array(32));
-    }
+    // Recorded, but explicitly NOT paired. Anyone can complete a
+    // handshake — `HandshakeInit.didKey` is self-asserted, so a stranger
+    // with a fresh keypair is indistinguishable from a friend. Pairing
+    // happens out of band, and until it does this peer gets no messages.
+    peers.addUnpairedPeer(peerDid);
 
     peers.attachConnection(peerDid, connection);
     syncEngine.registerPeer(peerDid);
@@ -113,13 +113,20 @@ export class SessionManager {
     const epoch = currentEpoch();
     const sends: Array<Promise<void>> = [];
 
-    for (const peer of this.deps.peers.listConnected()) {
-      // Peers that connected inbound before pairing carry a placeholder
-      // key; skip them rather than encrypting to an all-zero key.
-      if (isZeroKey(peer.encryptionKey)) continue;
+    // Paired peers only. A live connection is not authorization: the
+    // handshake authenticates *a* key, not that its holder is someone
+    // this node chose to talk to. Publishing to every connected peer
+    // would hand plaintext to any stranger who dialled us.
+    for (const peer of this.deps.peers.listPairedConnected()) {
+      const connection = peer.connection;
+      if (!connection) continue;
 
-      const envelope = sealMessage(payload, peer.encryptionKey, epoch);
-      sends.push(peer.connection!.send(StreamType.E2EE_MESSAGE, envelope));
+      // Sealed under the connection's session key, not the peer's
+      // long-term X25519 key. That is what makes the traffic forward
+      // secret: the session key exists only while both ephemeral halves
+      // did, and those are wiped at handshake completion.
+      const envelope = sealMessage(payload, connection.sessionKey, epoch);
+      sends.push(connection.send(StreamType.E2EE_MESSAGE, envelope));
     }
 
     await Promise.all(sends);
@@ -136,7 +143,7 @@ export class SessionManager {
           await this.handleSyncFrame(frame, connection);
           break;
         case StreamType.E2EE_MESSAGE:
-          await this.handleMessageFrame(frame);
+          await this.handleMessageFrame(frame, connection);
           break;
         case StreamType.VOUCHER_HANDSHAKE:
           await this.deps.onVoucherFrame?.(frame.payload, connection);
@@ -224,12 +231,11 @@ export class SessionManager {
     return true;
   }
 
-  private async handleMessageFrame(frame: Frame): Promise<void> {
-    const opened = openMessage(frame.payload, this.deps.getEncryptionSecret());
+  private async handleMessageFrame(
+    frame: Frame,
+    connection: IConnection,
+  ): Promise<void> {
+    const opened = openMessage(frame.payload, connection.sessionKey);
     await this.deps.onMessage(opened.payload);
   }
-}
-
-function isZeroKey(key: Uint8Array): boolean {
-  return key.every((b) => b === 0);
 }

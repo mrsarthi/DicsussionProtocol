@@ -42,6 +42,8 @@ _*.mjs
 _*.mts
 _*.js
 _*.ts
+# ...and scratch directories, e.g. a throwaway bundle output
+_*/
 !*.d.ts
 
 # ─── Secrets ──────────────────────────────────────────────────────────
@@ -68,3 +70,6 @@ Thumbs.db
 
 # Machine-local agent settings; the shared config is committed
 .claude/settings.local.json
+
+# Throwaway ceremony practice — never part of the real chain
+ceremony-rehearsal/

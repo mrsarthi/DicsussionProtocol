@@ -23,6 +23,9 @@ import {
   calculateClockOffset,
   createHandshakeAck,
   createHandshakeInit,
+  deriveSessionKey,
+  HandshakeTag,
+  transcriptFor,
   processHandshakeInit,
   verifyHandshakeAck,
   verifyHandshakeChallenge,
@@ -240,25 +243,48 @@ export class IrohTransport implements ITransport {
     const control = await handle.openBi();
     await control.send.writeAll([CONTROL_STREAM_TAG]);
 
-    const init = createHandshakeInit(this.identity, this.didKey);
+    const { init, ephemeralSecret } = createHandshakeInit(
+      this.identity,
+      this.didKey,
+    );
     await writeJson(control, init);
 
     const { challenge, timestamp } = await readJson<ChallengeMessage>(control);
 
     // The ticket's nodeId is the did:key public half. Verifying the
     // challenge against it is what binds this QUIC connection to the
-    // identity the rest of the protocol trusts.
-    if (!verifyHandshakeChallenge(challenge, ticket.nodeId, init.nonce)) {
+    // identity the rest of the protocol trusts — and the transcript it
+    // signs covers both ephemeral keys, so the session key cannot be
+    // substituted by anyone on the path.
+    const context = {
+      initiatorDid: this.didKey,
+      responderDid: ticket.didKey,
+      initiatorNonce: init.nonce,
+      responderNonce: challenge.nonce,
+      initiatorEphemeral: init.ephemeralKey,
+      responderEphemeral: challenge.ephemeralKey,
+    };
+
+    if (!verifyHandshakeChallenge(challenge, ticket.nodeId, context)) {
       handle.close(1n, []);
+      ephemeralSecret.fill(0);
       throw new Error(`Handshake with ${ticket.didKey} failed challenge verification`);
     }
 
-    await writeJson(control, createHandshakeAck(this.identity, challenge.nonce));
+    await writeJson(control, createHandshakeAck(this.identity, context));
+
+    const sessionKey = deriveSessionKey(
+      ephemeralSecret,
+      challenge.ephemeralKey,
+      transcriptFor(HandshakeTag.ACK, context),
+    );
+    ephemeralSecret.fill(0);
 
     const connection = new IrohConnection(
       ticket.didKey,
       calculateClockOffset(timestamp, init.timestamp),
       handle,
+      sessionKey,
     );
 
     for (const streamType of SUB_STREAMS) {
@@ -283,7 +309,7 @@ export class IrohTransport implements ITransport {
 
     // Throws on clock skew, replayed nonce, or an expired nonce.
     const localTimestamp = Math.floor(Date.now() / 1000);
-    const { challenge, clockOffset } = processHandshakeInit(
+    const { challenge, clockOffset, sessionKey } = processHandshakeInit(
       init,
       this.identity,
       localTimestamp,
@@ -292,12 +318,26 @@ export class IrohTransport implements ITransport {
     await writeJson(control, { challenge, timestamp: localTimestamp });
 
     const ack = await readJson<HandshakeAck>(control);
-    if (!verifyHandshakeAck(ack, didKeyToPublicKey(init.didKey), challenge.nonce)) {
+    const context = {
+      initiatorDid: init.didKey,
+      responderDid: this.didKey,
+      initiatorNonce: init.nonce,
+      responderNonce: challenge.nonce,
+      initiatorEphemeral: init.ephemeralKey,
+      responderEphemeral: challenge.ephemeralKey,
+    };
+
+    if (!verifyHandshakeAck(ack, didKeyToPublicKey(init.didKey), context)) {
       handle.close(1n, []);
       return;
     }
 
-    const connection = new IrohConnection(init.didKey, clockOffset, handle);
+    const connection = new IrohConnection(
+      init.didKey,
+      clockOffset,
+      handle,
+      sessionKey,
+    );
 
     // Streams may be accepted in any order, so each is identified by its
     // tag rather than by position.

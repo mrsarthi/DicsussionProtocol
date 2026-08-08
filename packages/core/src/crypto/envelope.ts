@@ -115,8 +115,18 @@ export function deserializeEnvelope(buffer: Uint8Array): SecurityEnvelope {
   const tierThreshold = view.getUint16(offset, false);
   offset += 2;
 
-  // rln_nullifier (32 bytes) — zero-copy subarray
-  const rlnNullifier = buffer.subarray(offset, offset + 32);
+  // Every field below is COPIED, not a view.
+  //
+  // `subarray` aliases the caller's buffer. A transport that pools or
+  // reuses its receive buffer — the obvious optimisation, and one no
+  // caller is stopped from making — would then mutate these fields under
+  // any code still holding the envelope. For `nonce` that is
+  // catastrophic: AES-GCM with a repeated (key, nonce) pair leaks the
+  // XOR of both plaintexts and the authentication subkey.
+  //
+  // The copies cost one allocation per message and remove the whole
+  // class of bug.
+  const rlnNullifier = buffer.slice(offset, offset + 32);
   offset += 32;
 
   // zk_proof_len (u16 BE)
@@ -127,20 +137,16 @@ export function deserializeEnvelope(buffer: Uint8Array): SecurityEnvelope {
     throw new Error('Envelope truncated: insufficient bytes for proof + key + nonce');
   }
 
-  // zk_proof (variable) — zero-copy subarray
-  const zkProof = buffer.subarray(offset, offset + proofLen);
+  const zkProof = buffer.slice(offset, offset + proofLen);
   offset += proofLen;
 
-  // ephemeral_pubkey (32 bytes) — zero-copy subarray
-  const ephemeralPubkey = buffer.subarray(offset, offset + 32);
+  const ephemeralPubkey = buffer.slice(offset, offset + 32);
   offset += 32;
 
-  // nonce (12 bytes) — zero-copy subarray
-  const nonce = buffer.subarray(offset, offset + 12);
+  const nonce = buffer.slice(offset, offset + 12);
   offset += 12;
 
-  // ciphertext (remaining) — zero-copy subarray
-  const ciphertext = buffer.subarray(offset);
+  const ciphertext = buffer.slice(offset);
 
   return {
     version,

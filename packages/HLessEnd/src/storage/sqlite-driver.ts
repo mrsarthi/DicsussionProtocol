@@ -8,6 +8,8 @@
 import Database from 'better-sqlite3';
 
 import {
+  assertKnownCollection,
+  assertSafeColumn,
   deserializeRecord,
   getPrimaryKeyColumn,
   serializeValue,
@@ -42,8 +44,11 @@ export class SQLiteDriver implements IStorageDriver {
     value: Record<string, unknown>,
   ): Promise<void> {
     this.ensureOpen();
+    assertKnownCollection(collection);
 
     const columns = Object.keys(value);
+    for (const column of columns) assertSafeColumn(column);
+
     const placeholders = columns.map(() => '?').join(', ');
     const updates = columns.map((c) => `${c} = excluded.${c}`).join(', ');
 
@@ -61,6 +66,7 @@ export class SQLiteDriver implements IStorageDriver {
     key: string,
   ): Promise<Record<string, unknown> | undefined> {
     this.ensureOpen();
+    assertKnownCollection(collection);
 
     // Determine primary key column by collection
     const pkColumn = getPrimaryKeyColumn(collection);
@@ -74,6 +80,7 @@ export class SQLiteDriver implements IStorageDriver {
 
   async delete(collection: string, key: string): Promise<boolean> {
     this.ensureOpen();
+    assertKnownCollection(collection);
 
     const pkColumn = getPrimaryKeyColumn(collection);
     const sql = `DELETE FROM ${collection} WHERE ${pkColumn} = ?`;
@@ -88,12 +95,14 @@ export class SQLiteDriver implements IStorageDriver {
     limit?: number,
   ): Promise<Record<string, unknown>[]> {
     this.ensureOpen();
+    assertKnownCollection(collection);
 
     let sql = `SELECT * FROM ${collection}`;
     const params: unknown[] = [];
 
     if (filter && Object.keys(filter).length > 0) {
       const conditions = Object.entries(filter).map(([col, val]) => {
+        assertSafeColumn(col);
         params.push(bindable(val));
         return `${col} = ?`;
       });

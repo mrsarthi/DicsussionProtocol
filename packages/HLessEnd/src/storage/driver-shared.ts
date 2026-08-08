@@ -21,6 +21,50 @@
  * on both.
  */
 
+import { StorageCollections } from './types.js';
+
+/**
+ * Reject a collection name that is not one of ours.
+ *
+ * Table and column names cannot be parameterised in SQL — `better-sqlite3`
+ * binds values, not identifiers — so `SQLiteDriver` interpolates the
+ * collection straight into the statement. Today every caller passes a
+ * `StorageCollections` constant, so nothing is exploitable; this exists
+ * so that stays true if a future caller ever forwards something derived
+ * from a peer.
+ *
+ * @throws If the name is not a known collection.
+ */
+const KNOWN_COLLECTIONS: ReadonlySet<string> = new Set(
+  Object.values(StorageCollections),
+);
+
+export function assertKnownCollection(collection: string): void {
+  if (!KNOWN_COLLECTIONS.has(collection)) {
+    throw new Error(
+      `Unknown storage collection: ${collection}. Collection names are ` +
+        'interpolated into SQL and must come from StorageCollections.',
+    );
+  }
+}
+
+/**
+ * Reject a column name that cannot be a plain SQL identifier.
+ *
+ * Column names are interpolated, not bound — `better-sqlite3` cannot
+ * parameterise identifiers. Today they come from internally-built record
+ * objects, so nothing hostile reaches here; this is the guard that keeps
+ * that true if a future caller passes a key it did not construct.
+ */
+export function assertSafeColumn(column: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(column)) {
+    throw new Error(
+      `Unsafe column name: ${column}. Column names are interpolated into ` +
+        'SQL and must be plain identifiers.',
+    );
+  }
+}
+
 /** Primary key column for a collection (RFC 004 §4.1). */
 export function getPrimaryKeyColumn(collection: string): string {
   const pkMap: Record<string, string> = {

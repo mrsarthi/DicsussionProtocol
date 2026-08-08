@@ -123,9 +123,16 @@ test.describe('Suite 1.2 — E2EE Message Exchange', () => {
     }
   });
 
-  test('an envelope cannot be opened with the wrong key', () => {
-    const recipient = generateX25519Keypair();
-    const attacker = generateX25519Keypair();
+  test('an envelope cannot be opened with the wrong session key', () => {
+    // Messages are sealed under the connection's forward-secret session
+    // key now, not the recipient's long-term X25519 key — so the wrong
+    // key here is another session's, which is what an attacker who later
+    // stole a long-term key would be left holding.
+    const sessionKey = new Uint8Array(32);
+    crypto.getRandomValues(sessionKey);
+
+    const otherSessionKey = new Uint8Array(32);
+    crypto.getRandomValues(otherSessionKey);
 
     const envelope = sealMessage(
       {
@@ -136,17 +143,16 @@ test.describe('Suite 1.2 — E2EE Message Exchange', () => {
         timestamp: 1_700_000_000,
         messageIndex: 0,
       },
-      recipient.publicKey,
+      sessionKey,
       170_000_000,
     );
 
-    // The intended recipient reads it.
-    expect(openMessage(envelope, recipient.secretKey).payload.content).toBe(
+    expect(openMessage(envelope, sessionKey).payload.content).toBe(
       'confidential',
     );
 
     // Anyone else fails AES-GCM authentication.
-    expect(() => openMessage(envelope, attacker.secretKey)).toThrow();
+    expect(() => openMessage(envelope, otherSessionKey)).toThrow();
   });
 
   test('messages sent while offline queue in the outbox', async () => {
@@ -281,6 +287,97 @@ test.describe('Suite 1.2 — E2EE Message Exchange', () => {
       expect(history.map((m) => m.content)).toEqual(['durable']);
     } finally {
       await teardown();
+    }
+  });
+});
+
+test.describe('Suite 1.2 — Pairing Gates Message Delivery', () => {
+  test('an unpaired inbound peer receives no message traffic', async () => {
+    // Completing a handshake is not authorization. `HandshakeInit.didKey`
+    // is self-asserted, so a stranger with a freshly generated keypair is
+    // indistinguishable from a friend at the transport layer. Pairing —
+    // an explicit act by the application — is what separates them.
+    //
+    // A ticket is designed to be shared publicly (QR codes, links), so
+    // "attacker has the victim's ticket" is the expected case, not a
+    // compromise.
+    const victim = await DicsussionClient.init({ storagePath: ':memory:' });
+    const stranger = await DicsussionClient.init({ storagePath: ':memory:' });
+
+    try {
+      stranger.addPeer(victim.did, victim.encryptionPublicKey);
+      await stranger.connect(victim.getTicket());
+
+      const seen: string[] = [];
+      stranger.chat.onMessage('general', (m) => seen.push(m.content));
+
+      await new Promise((r) => setTimeout(r, 200));
+      await victim.chat.sendMessage({
+        channelId: 'general',
+        content: 'private to my contacts',
+      });
+      await new Promise((r) => setTimeout(r, 400));
+
+      expect(victim.getNetworkStatus().peerCount).toBe(1);
+      expect(seen).toEqual([]);
+    } finally {
+      await victim.disconnect();
+      await stranger.disconnect();
+    }
+  });
+
+  test('a paired peer still receives normally', async () => {
+    // The gate must not break delivery — a test that only asserted the
+    // negative would pass just as well if publish() were broken outright.
+    const alice = await DicsussionClient.init({ storagePath: ':memory:' });
+    const bob = await DicsussionClient.init({ storagePath: ':memory:' });
+
+    try {
+      alice.addPeer(bob.did, bob.encryptionPublicKey);
+      bob.addPeer(alice.did, alice.encryptionPublicKey);
+      await alice.connect(bob.getTicket());
+
+      const seen: string[] = [];
+      bob.chat.onMessage('general', (m) => seen.push(m.content));
+
+      await new Promise((r) => setTimeout(r, 200));
+      await alice.chat.sendMessage({ channelId: 'general', content: 'hello' });
+      await new Promise((r) => setTimeout(r, 400));
+
+      expect(seen).toEqual(['hello']);
+    } finally {
+      await alice.disconnect();
+      await bob.disconnect();
+    }
+  });
+
+  test('pairing an inbound peer afterwards starts delivery', async () => {
+    // The gate is a decision, not a permanent state: an application that
+    // accepts a stranger can pair them and traffic flows from then on.
+    const victim = await DicsussionClient.init({ storagePath: ':memory:' });
+    const newcomer = await DicsussionClient.init({ storagePath: ':memory:' });
+
+    try {
+      newcomer.addPeer(victim.did, victim.encryptionPublicKey);
+      await newcomer.connect(victim.getTicket());
+
+      const seen: string[] = [];
+      newcomer.chat.onMessage('general', (m) => seen.push(m.content));
+      await new Promise((r) => setTimeout(r, 200));
+
+      await victim.chat.sendMessage({ channelId: 'general', content: 'before' });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(seen).toEqual([]);
+
+      // The victim decides to accept them.
+      victim.addPeer(newcomer.did, newcomer.encryptionPublicKey);
+
+      await victim.chat.sendMessage({ channelId: 'general', content: 'after' });
+      await new Promise((r) => setTimeout(r, 400));
+      expect(seen).toEqual(['after']);
+    } finally {
+      await victim.disconnect();
+      await newcomer.disconnect();
     }
   });
 });

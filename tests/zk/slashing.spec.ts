@@ -10,7 +10,10 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { expect, test } from '@playwright/test';
 
 import { BN254_SCALAR_FIELD } from '../../packages/core/src/crypto/field.js';
-import { membershipCommitment } from '../../packages/core/src/crypto/poseidon.js';
+import {
+  deriveTrapdoor,
+  membershipCommitment,
+} from '../../packages/core/src/crypto/poseidon.js';
 import { generateKeypair, publicKeyToDidKey } from '../../packages/core/src/transport/did-key.js';
 import {
   createSignal,
@@ -36,6 +39,7 @@ import {
 import { ShareCollector } from '../../packages/HLessEnd/src/slashing/share-collector.js';
 import {
   createSlashingTombstone,
+  createUserRevocation,
   encodeTombstoneForSigning,
   RevocationReason,
   verifyTombstone,
@@ -410,3 +414,71 @@ function createResigned(
     signature: ed25519.sign(encodeTombstoneForSigning(unsigned), v.keypair.secretKey),
   };
 }
+
+test.describe('ZK — Voluntary Revocation Cannot Be Forged', () => {
+  test('a USER_REVOKED tombstone naming someone else is rejected', () => {
+    // The attack: commitments are public — MEMBER_LIST frames gossip them
+    // so peers can union their member sets. If a signature alone were
+    // enough, anyone who had seen a commitment could permanently revoke
+    // it, and revocation is irreversible by design.
+    const victimSecret = 424242n;
+    const victimCommitment = membershipCommitment(
+      victimSecret,
+      deriveTrapdoor(victimSecret),
+    );
+
+    const attacker = generateKeypair();
+    const forged = createUserRevocation(victimCommitment, {
+      keypair: attacker,
+      did: publicKeyToDidKey(attacker.publicKey),
+    });
+
+    // The signature itself is perfectly valid — that is the point.
+    const verdict = verifyTombstone(forged);
+
+    expect(verdict.valid).toBe(false);
+    expect(verdict.valid === false && verdict.reason).toBe(
+      'unprovable-ownership',
+    );
+  });
+
+  test('even a self-authored voluntary revocation is unverifiable from the wire', () => {
+    // Not a bug: nothing on the wire distinguishes this from the forgery
+    // above, so a receiver cannot treat them differently. Voluntary
+    // retirement is a local action; channel departure is the verifiable
+    // way to tell peers you have left.
+    const secret = 7n;
+    const owner = generateKeypair();
+
+    const own = createUserRevocation(
+      membershipCommitment(secret, deriveTrapdoor(secret)),
+      { keypair: owner, did: publicKeyToDidKey(owner.publicKey) },
+    );
+
+    expect(verifyTombstone(own).valid).toBe(false);
+  });
+
+  test('slashing tombstones are still accepted — the fix is narrow', () => {
+    // A slashing tombstone binds the commitment to recovered key
+    // material, so it verifies. Rejecting those too would have disabled
+    // the anti-spam guarantee entirely, which is the failure mode this
+    // test exists to catch.
+    const collector = new ShareCollector();
+    collector.observe({
+      ...signalToShare(createSignal(SECRET, context(1), 0)),
+      epoch: 100,
+    });
+    const detected = collector.observe({
+      ...signalToShare(createSignal(SECRET, context(9), 0)),
+      epoch: 100,
+    })!;
+
+    const signer = generateKeypair();
+    const tombstone = createSlashingTombstone(detected.shares, TRAPDOOR, {
+      keypair: signer,
+      did: publicKeyToDidKey(signer.publicKey),
+    });
+
+    expect(verifyTombstone(tombstone).valid).toBe(true);
+  });
+});

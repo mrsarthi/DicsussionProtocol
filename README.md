@@ -7,11 +7,24 @@
 *Solving the decentralization–privacy–performance trilemma*
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178c6.svg)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6.svg)](https://www.typescriptlang.org/)
 [![Rust](https://img.shields.io/badge/Rust-iroh--net-orange.svg)](https://iroh.computer/)
 
 
 </div>
+
+---
+
+> [!WARNING]
+> **Not yet production-ready.** The bundled Groth16 proving key comes from a
+> single-party development ceremony. Proving and verifying both refuse it
+> unless explicitly overridden, and it must be replaced by a multi-party
+> trusted setup before any real deployment — see
+> [`docs/TRUSTED_SETUP_CEREMONY.md`](docs/TRUSTED_SETUP_CEREMONY.md).
+>
+> Reputation-tier proofs are also not enforceable yet: `userScore` is an
+> unattested private input, so the range proof establishes nothing until
+> scores are committed. It is blocked in code rather than silently trusted.
 
 ---
 
@@ -38,7 +51,8 @@ The result is a messaging substrate where no single entity can read your message
 | **Metadata Privacy** | No server sees sender/receiver pairs, user identities, or reputation balances. DERP relays are honest-but-curious and see only encrypted byte streams. |
 | **Cryptographic Anti-Spam** | ZK-RLN Groth16 proofs enforce tiered rate limits. Exceeding quota triggers automatic identity slashing — no moderators needed. |
 | **Sybil Resistance** | Web-of-Trust reputation via blind endorsement vouchers. Issuance costs POC to prevent voucher farming. |
-| **Zero Trust** | All wire payloads carry attached zk-SNARK proofs. Every peer independently verifies every message. |
+| **Forward Secrecy** | Each connection derives a session key from both peers' ephemeral X25519 halves, which are wiped once it exists. Stealing both long-term keys later does not decrypt past sessions. |
+| **Zero Trust** | Every peer independently verifies what it receives. Anonymous messages carry an RLN rate-limit signal; Groth16 membership proofs are attached where a channel's signed anchor requires them. |
 
 ---
 
@@ -97,11 +111,30 @@ DicsussionProtocol/
 |---|---|---|
 | **Runtime & SDK** | Node.js / TypeScript | Core engine and public API surface (`@dicsussion/sdk`) |
 | **Networking** | Rust / [Iroh](https://iroh.computer/) (`iroh-net`) | QUIC streams, mDNS local discovery, STUN hole-punching, DERP relay fallback |
+| **Browser transport** | WebSocket relay | Iroh has no WASM target, so browsers relay frames by `did:key`. The relay cannot read or impersonate, but does learn who talks to whom — Iroh is preferable wherever it runs |
 | **State Sync** | [Automerge](https://automerge.org/) | Conflict-free replicated data types (CRDTs) over direct QUIC byte streams |
 | **Local Storage** | SQLite / IndexedDB | `better-sqlite3` on desktop, IndexedDB in browser contexts |
 | **Zero-Knowledge** | [Circom 2.x](https://docs.circom.io/) + [SnarkJS](https://github.com/iden3/snarkjs) | Groth16 proving system over BN254 for ZK-RLN and range proofs |
-| **Encryption** | X25519 + AES-256-GCM + Ed25519 | Key exchange, symmetric E2EE, signing keys (`did:key` identity) |
+| **Encryption** | X25519 + HKDF-SHA256 + AES-256-GCM + Ed25519 | Ephemeral key agreement per session, symmetric E2EE, signing keys (`did:key` identity) |
 | **Testing** | [Playwright](https://playwright.dev/) | Multi-peer headless orchestration, protocol flow validation |
+
+---
+
+## Platform Support
+
+| | Node / desktop | Mobile (React Native, Termux) | Browser |
+| :--- | :---: | :---: | :---: |
+| Messaging, identity, CRDT sync | ✅ | ✅ | ✅ |
+| Transport | Iroh QUIC | Iroh QUIC | WebSocket relay |
+| Storage | SQLite | SQLite | IndexedDB |
+| ZK-RLN rate limiting | ✅ | ✅ | ✅ |
+| Groth16 proving | ✅ | ✅ | ❌ artifacts load from disk |
+| mDNS discovery | ✅ | ⚠️ | ❌ pair by ticket |
+
+Browser consumers import from `@dicsussion/sdk/browser`, which excludes the
+native SQLite driver. Verified by an `esbuild --platform=browser` build in CI
+that fails if any Node builtin reaches the bundle. Full breakdown in
+[`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md).
 
 ---
 
@@ -119,7 +152,9 @@ Multi-document Automerge CRDT architecture, Bounded Sparse Merkle Tree (depth 16
 Unified Groth16 single-proof envelope combining ZK range proofs (reputation ≥ threshold) with ZK-RLN rate-limiting. Tiered quota allocation, Poseidon domain separation, Chaumian blind endorsement vouchers, and cryptographic slashing via Lagrange secret reconstruction.
 
 ### [RFC 004 — Headless Backend & SDK](specs/RFC_004-Headless-Backend.md)
-The `@dicsussion/sdk` (`DicsussionClient`) facade, Electron IPC process isolation, persistent Web Worker pool for proof generation, local Web-of-Trust scoring engine, and SQLite/IndexedDB persistence schemas.
+The `@dicsussion/sdk` (`DicsussionClient`) facade, a persistent worker pool for proof generation, the local Web-of-Trust scoring engine, and the SQLite/IndexedDB persistence schemas.
+
+The original requirement to mandate an Electron IPC topology was **withdrawn**: that is host-application plumbing, not protocol. The requirement is now "must not block the caller", which the worker pool satisfies equally in Electron, plain Node and React Native.
 
 ---
 
@@ -167,7 +202,6 @@ No global score exists. Every peer sees a different trust landscape shaped by th
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) ≥ 18
-- [Rust](https://rustup.rs/) (for `iroh-net` native bindings)
 
 ### Install
 
@@ -177,20 +211,23 @@ cd DicsussionProtocol
 npm install
 ```
 
-### Run Tests
+### Build and verify
 
 ```bash
-# Run all Playwright tests
-npx playwright test
-
-# Run in headed mode (visible browser)
-npx playwright test --headed
+npm run build       # compile both packages
+npm test            # 464 Playwright tests
+npm run typecheck   # tsc --noEmit
 ```
 
-### Type Check
+### Try it between two machines
+
+`npm run peer` is a complete node with a terminal instead of a UI — no
+application required. Run it on two machines, paste one's ticket into the
+other, and type. See [`docs/DEVICE_TESTING.md`](docs/DEVICE_TESTING.md),
+including the Termux route for Android.
 
 ```bash
-npx tsc --noEmit
+npm run peer
 ```
 
 ---
@@ -207,7 +244,9 @@ const client = await DicsussionClient.init({
   proofBackend: 'wasm',
 });
 
-// Send an E2EE message with attached ZK proof
+// Send an E2EE message. Anonymous sends carry an RLN rate-limit signal;
+// a Groth16 membership proof is attached only on channels whose signed
+// genesis anchor requires one.
 await client.chat.sendMessage({
   channelId: 'general',
   content: 'Hello, decentralized world!',
