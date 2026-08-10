@@ -1,9 +1,9 @@
 {
   "name": "@dicsussion/core",
   "version": "0.1.0",
-  "description": "Dicsussion protocol engine \u00e2\u20ac\u201d transport, crypto, CRDT sync, and zero-knowledge anti-spam (RFC 001\u00e2\u20ac\u201c003)",
+  "description": "Dicsussion protocol engine â€” transport, crypto, CRDT sync, and zero-knowledge anti-spam (RFC 001â€“003)",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "exports": {
     "./transport": {
       "types": "./dist/transport/index.d.ts",
@@ -27,7 +27,9 @@
     "src/zk/artifacts/rln_final.zkey",
     "src/zk/artifacts/verification_key.json",
     "src/zk/artifacts/DEVELOPMENT_ONLY.md",
-    "src/zk/circuits/rln_range_unified_js"
+    "src/zk/circuits/rln_range_unified_js",
+    "LICENSE",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc -b tsconfig.build.json"

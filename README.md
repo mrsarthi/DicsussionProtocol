@@ -295,7 +295,23 @@ Six multiplexed sub-streams over a single QUIC connection:
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+**[Apache License 2.0](LICENSE)** — free for any use, including commercial,
+with an explicit patent grant.
+
+Use it, modify it, ship it in a product, build a business on it. The only
+obligations are the usual Apache ones: keep the license and copyright notices,
+state what you changed, and include the [NOTICE](NOTICE) file.
+
+### Third-party terms
+
+`snarkjs` (GPL-3.0) is an *optional* dependency loaded via dynamic `import()`
+— it is not bundled or redistributed here, and installing it binds you to its
+terms directly. Applications that don't generate or verify proofs need not
+install it at all.
+
+Compiled circuit artifacts (`*.r1cs`, `*.wasm`, `*.zkey`) incorporate
+`circomlib` templates and are distributed under **GPL-3.0**, separately from
+the SDK source. See [NOTICE](NOTICE) for the full component breakdown.
 
 ---
 

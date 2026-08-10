@@ -1,9 +1,9 @@
 {
   "name": "@dicsussion/sdk",
   "version": "0.1.0",
-  "description": "Dicsussion headless backend and client SDK \u00e2\u20ac\u201d local-first, end-to-end encrypted, metadata-private messaging (RFC 004)",
+  "description": "Dicsussion headless backend and client SDK â€” local-first, end-to-end encrypted, metadata-private messaging (RFC 004)",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -15,7 +15,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc -b tsconfig.build.json"
