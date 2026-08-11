@@ -21,6 +21,7 @@ import {
   clearNonceRegistry,
   createHandshakeAck,
   createHandshakeInit,
+  NonceRegistry,
   deriveSessionKey,
   HandshakeTag,
   transcriptFor,
@@ -122,9 +123,22 @@ class LocalConnection implements IConnection {
   }
 
   async close(): Promise<void> {
+    if (this._state === ConnectionState.Disconnected) return;
+
     this._state = ConnectionState.Disconnected;
     this.sendQueue.clear();
     this.frameEmitter.removeAllListeners();
+
+    // Wipe the session key rather than leaving it referenced for as long
+    // as anything holds the connection.
+    //
+    // Best-effort, and deliberately not claimed as more: the runtime may
+    // already have copied this buffer during HKDF, and those copies are
+    // unreachable from here. What it does remove is the long-lived
+    // reference that outlives the session — the one that ends up in heap
+    // dumps and core files. Treat it as reducing exposure, not as
+    // guaranteeing erasure.
+    this.sessionKey.fill(0);
   }
 }
 
@@ -140,6 +154,9 @@ export class LocalTransport implements ITransport {
     connection: [IConnection];
   }>();
   private readonly connections = new Map<string, LocalConnection>();
+  /** Replay tracker scoped to this transport, not shared across instances. */
+  private readonly nonces = new NonceRegistry();
+
   private readonly didKey: string;
   private closed = false;
 
@@ -181,6 +198,7 @@ export class LocalTransport implements ITransport {
       init,
       remote.keypair,
       remoteTime,
+      remote.nonces,
     );
 
     // The transcript binds both identities, both nonces and both

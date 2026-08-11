@@ -6,6 +6,15 @@
 export { PROTOCOL_VERSION } from './types.js';
 
 export type { EncryptedPayload, KeyPair, SecurityEnvelope } from './types.js';
+// Runtime-neutral base64 — `Buffer` is Node-only and breaks in browsers
+export {
+  base64ToBytes,
+  base64UrlToBytes,
+  base64UrlToUtf8,
+  bytesToBase64,
+  bytesToBase64Url,
+  utf8ToBase64Url,
+} from './base64.js';
 // Key generation
 export {
   deriveSharedSecret,

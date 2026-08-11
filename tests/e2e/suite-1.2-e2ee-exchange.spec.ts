@@ -380,4 +380,60 @@ test.describe('Suite 1.2 — Pairing Gates Message Delivery', () => {
       await newcomer.disconnect();
     }
   });
+
+  test('an unpaired peer cannot inject messages into our chat', async () => {
+    // The mirror of the tests above, and the more dangerous direction.
+    // Gating `publish` stops us leaking *to* a stranger; it does nothing
+    // about what a stranger sends *at* us. The handshake succeeds, so both
+    // sides hold the same session key — an inbound envelope therefore
+    // decrypts perfectly and, ungated, would surface as a genuine message
+    // in the victim's channel. Anyone holding a public ticket could inject
+    // chat history into a stranger's client.
+    const victim = await DicsussionClient.init({ storagePath: ':memory:' });
+    const stranger = await DicsussionClient.init({ storagePath: ':memory:' });
+
+    try {
+      // One-sided: the stranger pairs us, we never pair them.
+      stranger.addPeer(victim.did, victim.encryptionPublicKey);
+      await stranger.connect(victim.getTicket());
+
+      const seen: string[] = [];
+      victim.chat.onMessage('general', (m) => seen.push(m.content));
+      await new Promise((r) => setTimeout(r, 200));
+
+      await stranger.chat.sendMessage({
+        channelId: 'general',
+        content: 'injected by a stranger',
+      });
+      await new Promise((r) => setTimeout(r, 400));
+
+      // Connected, and completely inert.
+      expect(victim.getNetworkStatus().peerCount).toBe(1);
+      expect(seen).toEqual([]);
+    } finally {
+      await victim.disconnect();
+      await stranger.disconnect();
+    }
+  });
+
+  test('an unpaired peer cannot drive CRDT reconciliation', async () => {
+    // Sync is the state-mutation path: an ungated peer can push Automerge
+    // deltas and read our document heads, which disclose channel activity
+    // even before any change is applied.
+    const victim = await DicsussionClient.init({ storagePath: ':memory:' });
+    const stranger = await DicsussionClient.init({ storagePath: ':memory:' });
+
+    try {
+      stranger.addPeer(victim.did, victim.encryptionPublicKey);
+      await stranger.connect(victim.getTicket());
+      await new Promise((r) => setTimeout(r, 400));
+
+      // `connect` calls beginSync, so a reconciliation attempt has already
+      // been made and refused by the time we look.
+      expect(victim.getNetworkStatus().lastSyncTimestamp).toBe(0);
+    } finally {
+      await victim.disconnect();
+      await stranger.disconnect();
+    }
+  });
 });

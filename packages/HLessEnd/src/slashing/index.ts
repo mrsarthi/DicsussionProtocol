@@ -20,7 +20,7 @@ export type {
 
 export {
   createSlashingTombstone,
-  createUserRevocation,
+  createLocalRetirementTombstone,
   encodeTombstoneForSigning,
   RevocationReason,
   verifyTombstone,

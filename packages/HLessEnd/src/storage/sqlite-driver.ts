@@ -110,7 +110,13 @@ export class SQLiteDriver implements IStorageDriver {
     }
 
     if (limit !== undefined) {
-      sql += ` LIMIT ${limit}`;
+      // Parameterised rather than interpolated. `limit` is typed `number`,
+      // so interpolation is not injectable today — but it was the one
+      // place in this file that stepped outside the pattern every other
+      // value follows, and it becomes injectable the moment the type
+      // widens to `number | string`.
+      sql += ' LIMIT ?';
+      params.push(limit);
     }
 
     return (this.db!.prepare(sql).all(...params) as Record<string, unknown>[]).map(

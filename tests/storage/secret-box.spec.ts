@@ -37,14 +37,46 @@ function cleanupDb(dbPath: string): void {
 const KEY = 'correct horse battery staple';
 
 test.describe('Storage — Secret Box', () => {
-  test('a sealed value round-trips', () => {
+  test('a passphrase-sealed value round-trips as v2', () => {
+    // `v2` since 2026-08-11: a passphrase is stretched with Argon2id
+    // against a random salt, and the salt has to travel with the value so
+    // a later session can reproduce the key.
     const box = new SecretBox(KEY);
     const sealed = box.seal('super-secret');
 
     expect(box.isEnabled).toBe(true);
     expect(sealed).not.toContain('super-secret');
+    expect(sealed.startsWith('v2:')).toBe(true);
+    expect(sealed.split(':')).toHaveLength(4); // v2:salt:nonce:ciphertext
+    expect(box.open(sealed)).toBe('super-secret');
+  });
+
+  test('a raw 32-byte key still round-trips as v1', () => {
+    // A full-entropy key needs no stretching, so it keeps the cheap HKDF
+    // path — and databases written before the Argon2id change still open.
+    const raw = new Uint8Array(32).fill(9);
+    const box = new SecretBox(raw);
+    const sealed = box.seal('super-secret');
+
     expect(sealed.startsWith('v1:')).toBe(true);
     expect(box.open(sealed)).toBe('super-secret');
+  });
+
+  test('a passphrase value survives a restart with a fresh instance', () => {
+    // The salt is in the ciphertext, so a new SecretBox with the same
+    // passphrase reproduces the key without any stored state.
+    const sealed = new SecretBox(KEY).seal('across-restart');
+
+    expect(new SecretBox(KEY).open(sealed)).toBe('across-restart');
+  });
+
+  test('each instance mints its own salt', () => {
+    // Two databases created with the same passphrase must not share a
+    // derived key — that is what makes precomputation useless.
+    const a = new SecretBox(KEY).seal('x').split(':')[1];
+    const b = new SecretBox(KEY).seal('x').split(':')[1];
+
+    expect(a).not.toBe(b);
   });
 
   test('sealing twice yields different ciphertexts', () => {

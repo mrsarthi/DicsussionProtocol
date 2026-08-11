@@ -177,6 +177,10 @@ export class IrohConnection implements IConnection {
     this.streams.clear();
     this.frameEmitter.removeAllListeners();
 
+    // Best-effort wipe — see LocalConnection.close() for why this is not
+    // a guarantee of erasure.
+    this.sessionKey.fill(0);
+
     try {
       this.connection.close(0n, []);
     } catch {

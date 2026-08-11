@@ -63,6 +63,23 @@ export interface MessagePayload {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
+/**
+ * Largest accepted message body, in UTF-16 code units.
+ *
+ * The parser validated field *types* but not *sizes*, so a peer could send
+ * a multi-gigabyte `content` string. AES-GCM authenticates, so the sender
+ * must already be paired — but pairing means "accepted once", not "trusted
+ * forever", and the cost lands on memory and on every row `MessageStore`
+ * subsequently writes.
+ *
+ * 64 KiB matches `MAX_GOSSIP_BODY`, so the two inbound paths agree on what
+ * counts as absurd.
+ */
+const MAX_CONTENT_LENGTH = 65_536;
+
+/** Largest accepted message or channel identifier. */
+const MAX_ID_LENGTH = 256;
+
 /** Serialise a payload to its canonical JSON byte form. */
 export function encodePayload(payload: MessagePayload): Uint8Array {
   return encoder.encode(
@@ -101,6 +118,19 @@ export function decodePayload(bytes: Uint8Array): MessagePayload {
   }
   if (typeof raw['content'] !== 'string') {
     throw new Error('Message payload missing content');
+  }
+  if (raw['content'].length > MAX_CONTENT_LENGTH) {
+    throw new Error(
+      `Message content too large: ${raw['content'].length} > ${MAX_CONTENT_LENGTH}`,
+    );
+  }
+  if (raw['id'].length > MAX_ID_LENGTH) {
+    throw new Error(`Message id too large: ${raw['id'].length} > ${MAX_ID_LENGTH}`);
+  }
+  if (raw['channelId'].length > MAX_ID_LENGTH) {
+    throw new Error(
+      `Channel id too large: ${raw['channelId'].length} > ${MAX_ID_LENGTH}`,
+    );
   }
   if (typeof raw['timestamp'] !== 'number') {
     throw new Error('Message payload missing timestamp');

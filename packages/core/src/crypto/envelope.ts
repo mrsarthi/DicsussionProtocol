@@ -23,6 +23,16 @@ import { PROTOCOL_VERSION } from './types.js';
 const MIN_ENVELOPE_SIZE = 89;
 
 /**
+ * Largest accepted `zk_proof` field.
+ *
+ * A Groth16 proof over BN254 is ~128 bytes serialised; 4 KiB leaves room
+ * for encoding overhead and a future proof system without admitting the
+ * full `u16` range. Nothing between 4 KiB and 64 KiB is a real proof, so
+ * accepting it only buys an attacker allocations.
+ */
+const MAX_PROOF_SIZE = 4096;
+
+/**
  * Serialize a SecurityEnvelope to binary format.
  * Version field appears at offset 0 per RFC 003 §6.1.
  *
@@ -111,6 +121,18 @@ export function deserializeEnvelope(buffer: Uint8Array): SecurityEnvelope {
   const epoch = epochHigh * 0x100000000 + epochLow;
   offset += 8;
 
+  // The wire carries a full u64; JavaScript numbers are exact only to
+  // 2^53. Beyond that this reconstruction silently rounds, so a crafted
+  // envelope could carry an epoch that compares equal to a different one
+  // and slip a replay past epoch-based freshness checks. `rln.ts` already
+  // guards its own epoch handling; the envelope parser did not.
+  //
+  // No honest clock reaches this — 2^53 ten-second epochs is billions of
+  // years — which is exactly why it must be rejected rather than trusted.
+  if (!Number.isSafeInteger(epoch)) {
+    throw new Error(`Envelope epoch exceeds safe integer range: ${epoch}`);
+  }
+
   // tier_threshold (u16 BE)
   const tierThreshold = view.getUint16(offset, false);
   offset += 2;
@@ -132,6 +154,12 @@ export function deserializeEnvelope(buffer: Uint8Array): SecurityEnvelope {
   // zk_proof_len (u16 BE)
   const proofLen = view.getUint16(offset, false);
   offset += 2;
+
+  if (proofLen > MAX_PROOF_SIZE) {
+    throw new Error(
+      `Envelope proof too large: ${proofLen} > ${MAX_PROOF_SIZE} bytes`,
+    );
+  }
 
   if (offset + proofLen + 32 + 12 > buffer.length) {
     throw new Error('Envelope truncated: insufficient bytes for proof + key + nonce');

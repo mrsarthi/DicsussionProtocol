@@ -11,7 +11,12 @@
  *   [0] msg_type u8 · [1..4] body_len u32 BE · [5..] body
  */
 
-import { bytesToField, fieldToBytes } from '@dicsussion/core/crypto';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  bytesToField,
+  fieldToBytes,
+} from '@dicsussion/core/crypto';
 import type { ObservedShare } from './share-collector.js';
 import type {
   DoubleSpendProof,
@@ -166,7 +171,7 @@ export function encodeTombstone(tombstone: RevocationTombstone): Uint8Array {
     trapdoor: tombstone.trapdoor?.toString(),
     timestamp: tombstone.timestamp,
     validatorDid: tombstone.validatorDid,
-    signature: Buffer.from(tombstone.signature).toString('base64'),
+    signature: bytesToBase64(tombstone.signature),
   };
 
   return frame(
@@ -239,7 +244,7 @@ export function decodeTombstone(buffer: Uint8Array): RevocationTombstone {
     trapdoor: optionalBigInt(raw['trapdoor'], 'trapdoor'),
     timestamp: raw['timestamp'],
     validatorDid: raw['validatorDid'],
-    signature: new Uint8Array(Buffer.from(raw['signature'], 'base64')),
+    signature: base64ToBytes(raw['signature']),
   };
 }
 

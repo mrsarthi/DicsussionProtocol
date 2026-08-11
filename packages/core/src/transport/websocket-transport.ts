@@ -10,11 +10,27 @@
  * between them by `did:key` (see `relay-protocol.ts`).
  *
  * **What this costs, stated plainly.** Every byte goes through a third
- * party. The relay cannot read messages — payloads are sealed and the
- * RFC 001 §5 handshake runs end-to-end through it, so it cannot
- * impersonate a peer either. What it *does* learn is who talks to whom
- * and when, which is precisely the metadata a direct Iroh connection
- * hides. `IrohTransport` remains the better choice wherever it runs.
+ * party.
+ *
+ * The relay cannot impersonate a peer: the RFC 001 §5 handshake runs
+ * end-to-end through it, so it never holds a signing key. It also cannot
+ * read chat bodies, which `SessionManager.publish` seals under the
+ * session key before they reach this transport.
+ *
+ * It *can* read everything else. This class frames and forwards without
+ * touching `sessionKey`, so CRDT sync on `0x01`, revocation gossip on
+ * `0x03`, voucher handshakes on `0x04`, and RLN traffic on `0x05`/`0x06`
+ * all cross the relay in the clear — which means a relay operator can
+ * reconstruct the membership graph and read message history replicated
+ * through CRDT sync.
+ *
+ * That is a known gap, tracked as finding A-1, not a design decision.
+ * Encrypting under `sessionKey` at this layer is the fix, and it needs
+ * framing, nonce management, and replay protection done properly.
+ *
+ * Until then: `IrohTransport` encrypts peer-to-peer with no readable
+ * intermediary and is strongly preferred wherever it runs. This transport
+ * exists because a browser cannot open a QUIC socket at all.
  */
 
 import { Emitter } from './emitter.js';
@@ -30,6 +46,7 @@ import {
   deriveSessionKey,
   HandshakeTag,
   transcriptFor,
+  NonceRegistry,
   processHandshakeInit,
   verifyHandshakeAck,
   verifyHandshakeChallenge,
@@ -170,13 +187,20 @@ class RelayConnection implements IConnection {
 
     this._state = ConnectionState.Disconnected;
     this.frameEmitter.removeAllListeners();
+
+    // Best-effort wipe — see LocalConnection.close() for why this is not
+    // a guarantee of erasure.
+    this.sessionKey.fill(0);
     this.onClose(this.peerDid);
   }
 
   /** Close without notifying the relay — used when the socket is gone. */
   markClosed(): void {
+    if (this._state === ConnectionState.Disconnected) return;
+
     this._state = ConnectionState.Disconnected;
     this.frameEmitter.removeAllListeners();
+    this.sessionKey.fill(0);
   }
 
   private scheduleFlush(): void {
@@ -199,6 +223,9 @@ class RelayConnection implements IConnection {
  * `ITransport` over a WebSocket relay, for browsers and webviews.
  */
 export class WebSocketTransport implements ITransport {
+  /** Replay tracker scoped to this transport, not shared across instances. */
+  private readonly nonces = new NonceRegistry();
+
   private readonly connections = new Map<string, RelayConnection>();
   private readonly connectionHandlers = new Set<ConnectionHandler>();
   /** Dials awaiting their `OPENED`, keyed by peer did. */
@@ -307,49 +334,59 @@ export class WebSocketTransport implements ITransport {
       this.options.identity,
       this.didKey,
     );
-    this.sendControl(ticket.didKey, init);
 
-    const { challenge, timestamp } = await this.readControl<ChallengeMessage>(
-      ticket.didKey,
-    );
+    // `finally`, not a wipe at each exit.
+    //
+    // The success path and the challenge-verification failure both used to
+    // wipe explicitly, which left exactly one hole: `readControl` below
+    // rejects on timeout or a closed socket, and neither is rare on a
+    // relay. The X25519 secret then stayed live in the heap until GC,
+    // which is the one place forward secrecy assumes it is not.
+    try {
+      this.sendControl(ticket.didKey, init);
 
-    // The ticket's nodeId is the did:key public half, so verifying the
-    // challenge against it binds this relay session to the identity the
-    // rest of the protocol trusts — not to whatever the relay claims.
-    const context = {
-      initiatorDid: this.didKey,
-      responderDid: ticket.didKey,
-      initiatorNonce: init.nonce,
-      responderNonce: challenge.nonce,
-      initiatorEphemeral: init.ephemeralKey,
-      responderEphemeral: challenge.ephemeralKey,
-    };
-
-    if (!verifyHandshakeChallenge(challenge, ticket.nodeId, context)) {
-      this.sendEnvelope(RelayMessageType.CLOSED, ticket.didKey, EMPTY);
-      ephemeralSecret.fill(0);
-      throw new Error(
-        `Handshake with ${ticket.didKey} failed challenge verification`,
+      const { challenge, timestamp } = await this.readControl<ChallengeMessage>(
+        ticket.didKey,
       );
+
+      // The ticket's nodeId is the did:key public half, so verifying the
+      // challenge against it binds this relay session to the identity the
+      // rest of the protocol trusts — not to whatever the relay claims.
+      const context = {
+        initiatorDid: this.didKey,
+        responderDid: ticket.didKey,
+        initiatorNonce: init.nonce,
+        responderNonce: challenge.nonce,
+        initiatorEphemeral: init.ephemeralKey,
+        responderEphemeral: challenge.ephemeralKey,
+      };
+
+      if (!verifyHandshakeChallenge(challenge, ticket.nodeId, context)) {
+        this.sendEnvelope(RelayMessageType.CLOSED, ticket.didKey, EMPTY);
+        throw new Error(
+          `Handshake with ${ticket.didKey} failed challenge verification`,
+        );
+      }
+
+      this.sendControl(
+        ticket.didKey,
+        createHandshakeAck(this.options.identity, context),
+      );
+
+      const sessionKey = deriveSessionKey(
+        ephemeralSecret,
+        challenge.ephemeralKey,
+        transcriptFor(HandshakeTag.ACK, context),
+      );
+
+      return this.establish(
+        ticket.didKey,
+        calculateClockOffset(timestamp, init.timestamp),
+        sessionKey,
+      );
+    } finally {
+      ephemeralSecret.fill(0);
     }
-
-    this.sendControl(
-      ticket.didKey,
-      createHandshakeAck(this.options.identity, context),
-    );
-
-    const sessionKey = deriveSessionKey(
-      ephemeralSecret,
-      challenge.ephemeralKey,
-      transcriptFor(HandshakeTag.ACK, context),
-    );
-    ephemeralSecret.fill(0);
-
-    return this.establish(
-      ticket.didKey,
-      calculateClockOffset(timestamp, init.timestamp),
-      sessionKey,
-    );
   }
 
   onConnection(handler: ConnectionHandler): () => void {
@@ -468,6 +505,7 @@ export class WebSocketTransport implements ITransport {
         init,
         this.options.identity,
         localTimestamp,
+        this.nonces,
       );
       this.sendControl(peerDid, { challenge, timestamp: localTimestamp });
 

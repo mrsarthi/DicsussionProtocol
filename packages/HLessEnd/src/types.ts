@@ -26,10 +26,26 @@ export interface ClientConfig {
    *
    * A 32-byte key or a passphrase. Its provenance is the application's
    * concern — an OS keychain, a user passphrase, or a hardware token all
-   * satisfy the requirement. **Omitting it stores secrets in plaintext**,
-   * which is acceptable only for development.
+   * satisfy the requirement.
+   *
+   * **Required whenever `storagePath` names a real file.** Omitting it
+   * throws rather than silently writing identity secrets in the clear.
+   * In-memory databases are exempt: there is no file for anyone to read.
+   * See `allowUnencryptedStorage` to opt out deliberately.
    */
   storageKey?: Uint8Array | string;
+  /**
+   * Permit an on-disk database with no encryption at rest.
+   *
+   * **Never set this in a shipped application.** Without `storageKey` the
+   * identity secret — the seed every message key derives from — sits in
+   * the SQLite file in plaintext, readable by any process or backup that
+   * can open it. Recovering it is a file copy, not an attack.
+   *
+   * Exists so tests and local debugging can opt in explicitly. The point
+   * is that it cannot happen by forgetting.
+   */
+  allowUnencryptedStorage?: boolean;
   /**
    * Default proof policy for channels **this node creates**.
    *

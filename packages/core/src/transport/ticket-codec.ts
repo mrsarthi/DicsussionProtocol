@@ -10,6 +10,13 @@
  * has no JSON representation and would otherwise silently become `{}`.
  */
 
+import {
+  base64ToBytes,
+  base64UrlToUtf8,
+  bytesToBase64,
+  utf8ToBase64Url,
+} from '../crypto/base64.js';
+
 import type { PeerTicket } from './types.js';
 
 /** Prefix identifying the ticket format, so a future one is distinguishable. */
@@ -33,18 +40,18 @@ interface WireTicket {
 export function encodeTicket(ticket: PeerTicket): string {
   const wire: WireTicket = {
     d: ticket.didKey,
-    n: Buffer.from(ticket.nodeId).toString('base64'),
+    n: bytesToBase64(ticket.nodeId),
     a: [...ticket.directAddresses],
     ...(ticket.derpRelay ? { r: ticket.derpRelay } : {}),
     ...(ticket.transportKey
-      ? { t: Buffer.from(ticket.transportKey).toString('base64') }
+      ? { t: bytesToBase64(ticket.transportKey) }
       : {}),
     ...(ticket.encryptionKey
-      ? { e: Buffer.from(ticket.encryptionKey).toString('base64') }
+      ? { e: bytesToBase64(ticket.encryptionKey) }
       : {}),
   };
 
-  return TICKET_PREFIX + Buffer.from(JSON.stringify(wire)).toString('base64url');
+  return TICKET_PREFIX + utf8ToBase64Url(JSON.stringify(wire));
 }
 
 /**
@@ -65,7 +72,7 @@ export function decodeTicket(encoded: string): PeerTicket {
   let wire: WireTicket;
   try {
     wire = JSON.parse(
-      Buffer.from(trimmed.slice(TICKET_PREFIX.length), 'base64url').toString('utf8'),
+      base64UrlToUtf8(trimmed.slice(TICKET_PREFIX.length)),
     ) as WireTicket;
   } catch {
     throw new Error('Malformed ticket: could not decode the payload');
@@ -77,14 +84,14 @@ export function decodeTicket(encoded: string): PeerTicket {
 
   return {
     didKey: wire.d,
-    nodeId: new Uint8Array(Buffer.from(wire.n, 'base64')),
+    nodeId: base64ToBytes(wire.n),
     directAddresses: Array.isArray(wire.a) ? wire.a : [],
     derpRelay: wire.r,
     transportKey: wire.t
-      ? new Uint8Array(Buffer.from(wire.t, 'base64'))
+      ? base64ToBytes(wire.t)
       : undefined,
     encryptionKey: wire.e
-      ? new Uint8Array(Buffer.from(wire.e, 'base64'))
+      ? base64ToBytes(wire.e)
       : undefined,
   };
 }

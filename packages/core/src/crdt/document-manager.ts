@@ -14,6 +14,15 @@ import type { ChatMessage, DocumentMeta, DocumentSchema } from './types.js';
 /** Snapshot policy: create snapshot every N changes. */
 const SNAPSHOT_CHANGE_THRESHOLD = 1000;
 
+/**
+ * Ceiling on documents held in memory at once.
+ *
+ * Generous for any real user — a person in a thousand channels is beyond
+ * the design point — and small enough that a peer naming document ids at
+ * line rate hits a wall instead of the heap.
+ */
+const MAX_DOCUMENTS = 1_024;
+
 /** Internal document wrapper tracking change count for snapshot policy. */
 interface ManagedDoc {
   doc: Automerge.Doc<DocumentSchema>;
@@ -235,6 +244,23 @@ export class DocumentManager {
   ensureSyncDocument(docId: string): Automerge.Doc<DocumentSchema> {
     const existing = this.documents.get(docId);
     if (existing) return existing.doc;
+
+    // Refuse to mint beyond the ceiling.
+    //
+    // This is reached from inbound sync, where `docId` is a value the
+    // *peer* chose. Without a bound, a peer can name an unlimited number
+    // of documents and each one allocates an Automerge replica that never
+    // goes away — memory exhaustion with no malformed frame anywhere and
+    // nothing in a log to explain it.
+    //
+    // Throwing rather than silently ignoring: the sync engine drops
+    // frames it cannot handle (RFC 001 §7), so the connection survives,
+    // but the failure is visible instead of manifesting as a slow leak.
+    if (this.documents.size >= MAX_DOCUMENTS) {
+      throw new Error(
+        `Document limit reached (${MAX_DOCUMENTS}); refusing to create ${docId}`,
+      );
+    }
 
     const doc = Automerge.init<DocumentSchema>();
     this.documents.set(docId, {

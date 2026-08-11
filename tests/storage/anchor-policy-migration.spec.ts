@@ -60,7 +60,7 @@ test.describe('Storage — Anchor Proof-Policy Migration', () => {
     const path = join(dir, 'legacy.db');
     seedLegacyDatabase(path);
 
-    const client = await DicsussionClient.init({ storagePath: path });
+    const client = await DicsussionClient.init({ storagePath: path, storageKey: 'test-at-rest-key' });
 
     try {
       const anchor = client.getGenesisAnchor('legacy');
@@ -83,7 +83,7 @@ test.describe('Storage — Anchor Proof-Policy Migration', () => {
     const path = join(dir, 'legacy.db');
     seedLegacyDatabase(path);
 
-    const client = await DicsussionClient.init({ storagePath: path });
+    const client = await DicsussionClient.init({ storagePath: path, storageKey: 'test-at-rest-key' });
 
     try {
       const group = await client.groups.createGroup('fresh', [], {

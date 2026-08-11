@@ -168,15 +168,191 @@ packages/HLessEnd/src/
 
 ---
 
+## Task 2: Web-of-Trust & Anti-Spam Pipeline
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-06
+
+- [x] **Bounded Sparse Merkle Tree** (D=16, capacity 4,096) with lexicographic
+  byte sorting — replaces the Phase 1A SHA-256 state root. Versioned root
+  `H(version ‖ params ‖ tree)` so a parameter change cannot silently produce a
+  colliding root.
+- [x] **Local WoT score calculator** wired to real peer interaction counters.
+- [x] **Chaumian RSA-FDH blind vouchers** (RSA-2048) over Stream `0x04` —
+  full-domain hashing, so a receiver cannot exploit RSA's multiplicative
+  homomorphism to forge a second signature from one issuance.
+- [x] **Channel Creator Genesis Anchor** bootstrapping, with the proof policy
+  inside the signature — otherwise a relaying peer could downgrade a channel
+  to unproven in transit.
+- [x] **Two-phase membership set** — joins minus departure tombstones, so a
+  departure cannot be replayed into a different channel.
+
+---
+
+## Task 3: Zero-Knowledge RLN & Slashing
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-06
+
+- [x] **Unified Groth16 circuit** (`rln_range_unified.circom`) over BN254 —
+  combines ZK range proof (reputation ≥ threshold) with RLN rate limiting in
+  a single proof.
+- [x] **2-of-2 Shamir polynomial** `y = a₀ + a₁·x`; a double-send in one epoch
+  lets any peer reconstruct `a₀` by Lagrange interpolation.
+- [x] **Poseidon domain separation** — 8 distinct tags, `assertCanonicalField`
+  before every input to prevent wraparound forgeries.
+- [x] **Trapdoor derivation fix.** `cm_identity` originally mixed `a₀` with
+  *independent* randomness, which meant slashing could only ever fire against
+  yourself. Now `trapdoor = Poseidon(DS_trapdoor, a₀)` — derived, not
+  independent. The original code carried a comment rationalising the flaw
+  circularly.
+- [x] **Revocation tombstones** over Stream `0x03`, verified by re-deriving
+  shares against the commitment rather than trusting the signature alone.
+
+---
+
+## Task 4: Browser Support & SDK Packaging
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-07
+
+- [x] **WebSocket relay transport** — Iroh has no WASM target and a browser
+  cannot open a QUIC socket, so browser peers relay frames by `did:key`.
+- [x] **IndexedDB storage driver** with a write queue, at parity with SQLite.
+- [x] `@dicsussion/sdk/browser` entry point excluding the native SQLite driver,
+  verified by an `esbuild --platform=browser` build in CI.
+- [x] npm workspaces, `exports` maps, `browser` field mapping, TypeScript
+  project references.
+
+---
+
+## Task 5: Trusted Setup Ceremony
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-11
+
+Six independent contributors, closed with a public beacon.
+
+| # | Contributor | Date |
+|---|---|---|
+| 1 | Parth Sarthi Mishra | 2026-08-08 |
+| 2 | Ramandeep Yadav | 2026-08-08 |
+| 3 | Prakhar Srivastav | 2026-08-08 |
+| 4 | Parth Mehrotra | 2026-08-08 |
+| 5 | Shubham Vishwakarma | 2026-08-10 |
+| 6 | Snehal Kumar | 2026-08-10 |
+| 7 | Beacon — Bitcoin block 962000 | 2026-08-11 |
+
+- [x] Beacon committed **2026-08-08 15:15:45 UTC**, block mined **2026-08-11
+  11:07:57 UTC** — a lead time of 2 days 19 hours 52 minutes. The advance
+  commitment is the entire security property; a beacon announced afterwards
+  proves nothing.
+- [x] Block hash verified against two independent explorers before applying.
+- [x] `DEVELOPMENT_ONLY.md` deleted — the SDK is live on real ceremony
+  artifacts. `rln_final.zkey` SHA-256 `b1d518ab…bec20f`.
+- [x] Public record: https://github.com/mrsarthi/Ceremonial-Contributions
+
+**Forging a proof now requires all six contributors to have colluded, all six
+to have kept entropy they publicly attested to destroying, and control of a
+Bitcoin block hash that did not exist when the commitment was published.**
+
+---
+
+## Task 6: Security Hardening
+**Status:** ✅ COMPLETE (two findings deferred by design)
+**Date:** 2026-08-11
+
+Two independent audits. Full record — including disputed severities and the
+items still open — in `docs/SECURITY_BACKLOG.md` (gitignored: it lists live
+weaknesses with file and line).
+
+- [x] **Pairing gate on inbound frames.** A completed handshake is not
+  authorization — `HandshakeInit.didKey` is self-asserted. Previously any
+  stranger holding a public ticket could inject messages into another user's
+  chat history and drive CRDT reconciliation. Reproduced with the gate
+  disabled before fixing.
+- [x] **Storage fails closed.** Omitting `storageKey` on a real file now
+  throws instead of warning. A `console.warn` is not a control.
+- [x] **`Buffer` removed from browser-reachable code** — it appeared in
+  `ticket-codec`, `secret-box`, and `gossip-protocol`, so browser pairing had
+  never actually worked. The `esbuild` CI check could not catch it: `Buffer`
+  is a global, not a builtin import.
+- [x] **Argon2id for passphrases** (OWASP `t=2, m=19 MiB`), replacing HKDF.
+  The `t=3, m=64 MiB` baseline measured 2638 ms with `@noble/hashes` — too
+  slow to run at client open.
+- [x] **Aggregate resource caps** — pending membership chunks and peer-named
+  documents.
+- [x] **Input bounds** — proof size, message content, identifiers, epoch
+  safe-integer range.
+- [x] **Per-transport nonce registry**, replacing module-level shared state.
+- [x] Session keys wiped on close; ephemeral secrets wiped on all paths
+  including handshake timeout.
+
+### Known gaps, documented rather than hidden
+- [ ] **WebSocket relay does not encrypt CRDT traffic** (browser only). Chat
+  bodies are sealed; CRDT sync, membership, vouchers, and RLN signals cross
+  the relay in the clear. Iroh/QUIC is unaffected. Stated in `README.md` and
+  in the transport's own module docblock.
+- [ ] **CRDT changes lack application-level authenticity.** The pairing gate
+  means only paired peers can submit changes, but a peer you later distrust
+  can still write arbitrary state. Fixing this is a wire-format change and an
+  RFC amendment — design note first.
+- [ ] **Message content at rest is unencrypted.** Identity secrets are
+  protected; chat bodies and Automerge snapshots are not.
+
+---
+
+## Task 7: Licensing & Publication Readiness
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-11
+
+- [x] **Apache 2.0** across `LICENSE`, `NOTICE`, and both `package.json`
+  files, resolving a contradiction where the README said Apache and the
+  manifests said MIT.
+- [x] `NOTICE` records the GPL-3.0 carve-outs honestly: `snarkjs` is an
+  optional dependency loaded by dynamic `import()` and never redistributed;
+  compiled circuit artifacts embed `circomlib` templates and ship under
+  GPL-3.0, separately from the SDK source.
+- [x] Both packages verified to carry `LICENSE` and `NOTICE` inside their
+  tarballs, as Apache §4(a) and §4(d) require.
+- [x] npm scope `@dicsussion` claimed; `publishConfig.access: public` set.
+
+---
+
+## Current State (2026-08-11)
+
+| | |
+|---|---|
+| Tests | **488 passing, 0 failing** |
+| Typecheck | clean |
+| Build | clean |
+| `npm audit` | 0 vulnerabilities |
+| Proving key | real ceremony output, 6 contributors + beacon |
+| License | Apache 2.0 |
+| Published | **not yet** — pending commit |
+
+**Test suites:** 10 e2e, 13 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT.
+
+---
+
 ## Next Immediate Step
-**Phase 2A — Web-of-Trust & Anti-Spam Pipeline**
-1. Bounded Sparse Merkle Tree (D=16) with lexicographic byte sorting and LRU
-   eviction at N_max = 65,536 — replaces the Phase 1A SHA-256 state root.
-2. Local WoT score calculator wired to real peer interaction counters.
-3. Identifiable Blind Voucher issuance handshakes over Stream `0x04`.
-4. Channel Creator Genesis Anchor bootstrapping.
+
+1. Commit the outstanding work in logical chunks (~40 files: licensing,
+   ceremony artifacts, and roughly a dozen security fixes).
+2. Publish `@dicsussion/core`, then `@dicsussion/sdk` — core first, the SDK
+   depends on it.
+3. Tag a GitHub release naming the three known gaps above.
+4. Push `ATTESTATION.md`, `Contribution_7.txt`, and the README update to the
+   Ceremonial-Contributions repo.
 
 ### Deferred (non-blocking)
-- [ ] Iroh Native/FFI Binding — swap `LocalTransport` for real QUIC (see tracked subtask above)
-- [ ] OS-keychain encryption for identity secret keys (RFC 004 §4.1)
+- [ ] Relay transport encryption (~1 day) — closes the browser confidentiality gap
+- [ ] CRDT operation authenticity — design note, then RFC amendment
+- [ ] Message content encryption at rest — needs a granularity decision and
+      WAL handling; measure before choosing
+- [ ] OS-keychain integration for identity secrets (RFC 004 §4.1) — explicitly
+      deferred to v1.1; SQLite with encryption at rest is sufficient for v1
+- [ ] Native prover (rapidsnark) — WASM proving is ~1s per anonymous message
+- [ ] Relay server implementation — the SDK speaks the protocol; no reference
+      server ships yet
+- [ ] Per-message ratchet — forward secrecy is currently per-session
+- [ ] Tier gating — `userScore` is a self-asserted private input, held in check
+      by application code on both sides. **Do not enable tiers without binding
+      it in the circuit**, or quotas become forgeable 100×.
 - [ ] `exportMnemonic` / `recoverFromMnemonic` / `revokeKey` implementation

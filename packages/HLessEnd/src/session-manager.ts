@@ -74,8 +74,8 @@ export class SessionManager {
    * Attach frame handling and sync state to a new connection.
    *
    * An inbound peer may not have been paired yet. It is recorded so its
-   * connection can be tracked and CRDT sync can proceed, but it receives
-   * no message traffic until the application pairs it — see `publish`.
+   * connection can be tracked, but until the application pairs it the
+   * peer gets no protocol surface at all — see `handleFrame`.
    */
   registerConnection(connection: IConnection): void {
     const { peers, syncEngine } = this.deps;
@@ -95,12 +95,32 @@ export class SessionManager {
     });
   }
 
-  /** Open the RFC 002 §4.2 reconciliation conversation with a peer. */
+  /**
+   * Open the RFC 002 §4.2 reconciliation conversation with a peer.
+   *
+   * Refuses unpaired peers: beginning sync would disclose our document
+   * heads, which leak channel membership and activity even before any
+   * change is exchanged.
+   */
   async beginSync(connection: IConnection): Promise<void> {
+    if (!this.isPaired(connection.peerDid)) return;
+
     await connection.send(
       StreamType.CRDT_SYNC,
       this.deps.syncEngine.beginSync(connection.peerDid),
     );
+  }
+
+  /**
+   * Whether a peer was paired out of band, and may therefore be spoken to.
+   *
+   * A completed handshake is **not** authorization. `HandshakeInit.didKey`
+   * is self-asserted, so a stranger who generates a fresh keypair produces
+   * a handshake indistinguishable from a friend's. Pairing (RFC 001 §3.3)
+   * happens off the wire and is the only thing that separates them.
+   */
+  private isPaired(peerDid: string): boolean {
+    return this.deps.peers.getPeer(peerDid)?.paired === true;
   }
 
   /**
@@ -137,6 +157,20 @@ export class SessionManager {
     frame: Frame,
     connection: IConnection,
   ): Promise<void> {
+    // Authorization gate for everything inbound.
+    //
+    // Completing a handshake proves only that the dialer holds the key it
+    // presented — never that we chose to talk to them. Without this check
+    // a stranger can push Automerge deltas into our documents, submit
+    // membership frames, spend our voucher issuance quota, and inject
+    // revocation gossip and RLN shares, purely by dialling us.
+    //
+    // Nothing legitimate is lost: pairing is out of band (RFC 001 §3.3),
+    // so no wire traffic is needed to become paired. Peers that dial us
+    // stay connected and silent until the application pairs them, at
+    // which point every stream below opens at once.
+    if (!this.isPaired(connection.peerDid)) return;
+
     try {
       switch (frame.header.streamType) {
         case StreamType.CRDT_SYNC:

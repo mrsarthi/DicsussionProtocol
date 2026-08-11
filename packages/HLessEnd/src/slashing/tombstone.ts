@@ -166,7 +166,15 @@ export function createSlashingTombstone(
 }
 
 /**
- * Build a voluntary revocation tombstone (`USER_REVOKED`).
+ * Build a **local-only** retirement tombstone (`USER_REVOKED`).
+ *
+ * @internal Not part of the gossip surface. Renamed from
+ * `createUserRevocation` on 2026-08-11: the behaviour was always correct
+ * and documented, but the old name said nothing about the local-only
+ * constraint, and the value it returns is the same `RevocationTombstone`
+ * type the gossipable kinds use. A future change could therefore have
+ * wired it to `handleTombstoneFrame` and typechecked cleanly, publishing
+ * something no peer can verify.
  *
  * Unlike a slashing tombstone this carries no double-spend evidence —
  * there is no misconduct to prove.
@@ -181,7 +189,7 @@ export function createSlashingTombstone(
  * @param commitment The `cm_identity` being retired.
  * @param holder The identity's own keypair and did:key.
  */
-export function createUserRevocation(
+export function createLocalRetirementTombstone(
   commitment: bigint,
   holder: { keypair: Ed25519KeyPair; did: string },
   now: number = Math.floor(Date.now() / 1000),

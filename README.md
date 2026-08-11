@@ -15,16 +15,34 @@
 
 ---
 
-> [!WARNING]
-> **Not yet production-ready.** The bundled Groth16 proving key comes from a
-> single-party development ceremony. Proving and verifying both refuse it
-> unless explicitly overridden, and it must be replaced by a multi-party
-> trusted setup before any real deployment — see
-> [`docs/TRUSTED_SETUP_CEREMONY.md`](docs/TRUSTED_SETUP_CEREMONY.md).
+> [!IMPORTANT]
+> **v0.1.0 — first public release. Read this before depending on it.**
 >
-> Reputation-tier proofs are also not enforceable yet: `userScore` is an
-> unattested private input, so the range proof establishes nothing until
-> scores are committed. It is blocked in code rather than silently trusted.
+> The Groth16 proving key is the output of a **completed six-party trusted
+> setup**, closed with a Bitcoin block hash committed to publicly three days
+> before that block was mined. Every contribution hash, the beacon, and a full
+> verification transcript are published at
+> [Ceremonial-Contributions](https://github.com/mrsarthi/Ceremonial-Contributions)
+> — verify it rather than taking our word for it.
+>
+> Three limits are known and unfixed. None is hidden, and each is scoped:
+>
+> - **The WebSocket relay does not encrypt CRDT traffic.** Chat bodies are
+>   sealed end-to-end, but document sync, membership, vouchers, and RLN
+>   signals cross the relay in the clear, so a relay operator can read message
+>   history and the membership graph. **Browser only** — Iroh/QUIC has no
+>   readable intermediary. See [Platform Support](#platform-support).
+> - **Replicated CRDT changes are not individually authenticated.** Only
+>   paired peers can submit changes at all, but a peer you later distrust can
+>   still write arbitrary state.
+> - **Reputation tiers are not enforceable.** `userScore` is an unattested
+>   private input, so the range proof establishes nothing until scores are
+>   committed to the membership tree. Blocked in code rather than silently
+>   trusted — do not enable tiers without changing the circuit.
+>
+> Chat content at rest is also unencrypted; identity secrets are not. No
+> external security audit has been performed. Two internal audits and their
+> outcomes are recorded in `PROGRESS.md`.
 
 ---
 
@@ -111,7 +129,7 @@ DicsussionProtocol/
 |---|---|---|
 | **Runtime & SDK** | Node.js / TypeScript | Core engine and public API surface (`@dicsussion/sdk`) |
 | **Networking** | Rust / [Iroh](https://iroh.computer/) (`iroh-net`) | QUIC streams, mDNS local discovery, STUN hole-punching, DERP relay fallback |
-| **Browser transport** | WebSocket relay | Iroh has no WASM target, so browsers relay frames by `did:key`. The relay cannot read or impersonate, but does learn who talks to whom — Iroh is preferable wherever it runs |
+| **Browser transport** | WebSocket relay | Iroh has no WASM target, so browsers relay frames by `did:key`. **The relay currently sees all traffic except chat envelopes in the clear** — see the warning below. Iroh is strongly preferable wherever it runs |
 | **State Sync** | [Automerge](https://automerge.org/) | Conflict-free replicated data types (CRDTs) over direct QUIC byte streams |
 | **Local Storage** | SQLite / IndexedDB | `better-sqlite3` on desktop, IndexedDB in browser contexts |
 | **Zero-Knowledge** | [Circom 2.x](https://docs.circom.io/) + [SnarkJS](https://github.com/iden3/snarkjs) | Groth16 proving system over BN254 for ZK-RLN and range proofs |
@@ -135,6 +153,20 @@ Browser consumers import from `@dicsussion/sdk/browser`, which excludes the
 native SQLite driver. Verified by an `esbuild --platform=browser` build in CI
 that fails if any Node builtin reaches the bundle. Full breakdown in
 [`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md).
+
+> [!WARNING]
+> **The WebSocket relay transport does not yet encrypt CRDT traffic.**
+>
+> Chat payloads on Stream `0x02` are sealed end-to-end and stay private.
+> Everything else — CRDT document sync, channel membership, endorsement
+> vouchers, revocation gossip, and RLN signals — is handed to the relay as
+> plaintext frames. A relay operator can therefore read message history
+> replicated through CRDT sync and the full membership graph.
+>
+> This affects the **browser path only**. Iroh QUIC encrypts peer-to-peer
+> with no readable intermediary, so Node, desktop, and mobile are not
+> exposed. Treat the WebSocket relay as unsuitable for confidential use
+> until this is fixed, and prefer Iroh wherever it runs.
 
 ---
 
@@ -177,6 +209,19 @@ Traditional platforms moderate spam with centralized servers and phone number ve
 | Tier 3 (High Rep) | ≥200 POC | Unrestricted |
 
 The slashing is **automatic and trustless** — no moderator votes, no appeals, just math.
+
+> [!IMPORTANT]
+> **This holds only on channels that require proofs**, set via
+> `createGroup(..., { requireProofs: true })` or the `zkProofs: 'anonymous'`
+> client default. Proofs are **off by default**, because generating one
+> costs roughly a second per message and that is wasted effort in a
+> two-person chat where nobody is anonymous.
+>
+> With proofs off, the nullifier and Shamir share still travel with each
+> message, but nothing binds them to the sender's secret — they are values
+> the sender chose. They catch an honest client that double-sends, and
+> nothing else. **Do not present proof-disabled RLN to users as spam
+> protection.** Turn proofs on for open or adversarial channels.
 
 ---
 

@@ -26,7 +26,6 @@
     "dist",
     "src/zk/artifacts/rln_final.zkey",
     "src/zk/artifacts/verification_key.json",
-    "src/zk/artifacts/DEVELOPMENT_ONLY.md",
     "src/zk/circuits/rln_range_unified_js",
     "LICENSE",
     "NOTICE"

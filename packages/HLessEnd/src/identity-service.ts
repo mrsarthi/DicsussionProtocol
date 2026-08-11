@@ -14,7 +14,7 @@ import { generateBlindKeyPair, membershipCommitment } from '@dicsussion/core/cry
 import type { Ed25519KeyPair } from '@dicsussion/core/transport';
 import { createMnemonic, deriveIdentity } from './identity-derivation.js';
 import type { RevocationTombstone } from './slashing/tombstone.js';
-import { createUserRevocation } from './slashing/tombstone.js';
+import { createLocalRetirementTombstone } from './slashing/tombstone.js';
 import { SecretBox } from './storage/secret-box.js';
 import type { IStorageDriver } from './storage/types.js';
 import { StorageCollections } from './storage/types.js';
@@ -222,7 +222,7 @@ export class IdentityService {
     }
 
     await this.publishRevocation(
-      createUserRevocation(identity.commitment, {
+      createLocalRetirementTombstone(identity.commitment, {
         keypair: identity.signing,
         did: identity.did,
       }),

@@ -14,6 +14,10 @@
  * Proving is ~1s, so this suite is deliberately small.
  */
 
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { expect, test } from '@playwright/test';
 
 import { clearTransportRegistry } from '@dicsussion/core/transport';
@@ -286,8 +290,25 @@ test.describe('Suite 3.4 — Groth16 on the Message Path', () => {
     const tree = new BoundedMembershipTree();
     tree.insert(membershipCommitment(secret, deriveTrapdoor(secret)));
 
+    // Since 2026-08-11 the bundled artifacts are the real ceremony output,
+    // so pointing at them no longer triggers the guard. The guard is still
+    // worth testing — it is what stops a development key reaching users —
+    // so we synthesise the condition instead of deleting the test.
+    //
+    // Detection is `existsSync(dirname(zkeyPath) + '/DEVELOPMENT_ONLY.md')`,
+    // so a temp directory holding only the marker is enough: the check
+    // fires before any artifact is read.
+    const devDir = mkdtempSync(join(tmpdir(), 'dicsussion-devkey-'));
+    writeFileSync(
+      join(devDir, 'DEVELOPMENT_ONLY.md'),
+      '# Development ceremony\n\nSynthesised by the test suite.\n',
+    );
+
     const unguarded = new ProofService({
-      artifacts: artifacts!,
+      artifacts: {
+        ...artifacts!,
+        zkeyPath: join(devDir, 'rln_final.zkey'),
+      },
       getIdentitySecret: () => secret,
       getMembershipTree: () => tree,
       // allowDevelopmentCeremony deliberately omitted

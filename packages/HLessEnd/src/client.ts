@@ -154,7 +154,32 @@ export class DicsussionClient {
       zkProofs: config.zkProofs ?? 'off',
       proofArtifacts: config.proofArtifacts,
       allowDevelopmentCeremony: config.allowDevelopmentCeremony ?? false,
+      allowUnencryptedStorage: config.allowUnencryptedStorage ?? false,
     };
+
+    // Fail closed on at-rest encryption.
+    //
+    // Previously omitting `storageKey` logged a warning and wrote identity
+    // secrets in plaintext. A warning is not a control: it scrolls past in
+    // development and is absent from production logs nobody reads, so the
+    // failure mode was an application shipping with the seed every message
+    // key derives from sitting readable in its SQLite file.
+    //
+    // In-memory databases are exempt — there is no file to protect — which
+    // keeps tests and evaluation frictionless while making the unsafe
+    // on-disk case impossible to reach by accident.
+    if (
+      this.config.storagePath !== ':memory:' &&
+      this.config.storageKey.length === 0 &&
+      !this.config.allowUnencryptedStorage
+    ) {
+      throw new Error(
+        'storageKey is required when storagePath writes to disk: identity ' +
+          'secrets would otherwise be stored in plaintext (RFC 004 §4.1). ' +
+          'Pass a 32-byte key or passphrase, use storagePath: ":memory:", ' +
+          'or set allowUnencryptedStorage: true to accept the risk.',
+      );
+    }
     this.runtime = runtime;
 
     this.chat = new ChatService();
@@ -752,6 +777,24 @@ export class DicsussionClient {
    * The message is still admitted when detection fires — the sender is
    * revoked, but the message they already sent is not retroactively
    * rewritten. Rejecting it would give an attacker a way to un-send.
+   *
+   * ## Without a proof, this is advisory, not enforcement
+   *
+   * On a channel whose anchor does not require proofs, neither check is
+   * binding. Nothing ties `nullifierHash` or `rlnShare` to the sender's
+   * secret, so both are just field elements the sender chose: a fresh
+   * nullifier per message never collides, never trips the detector, and
+   * costs nothing to mint. `isWithinQuota` then bounds a number the
+   * attacker also picked.
+   *
+   * What survives is real but narrow — it catches an *honest* client that
+   * double-sends under one nullifier, and it makes accidental quota
+   * breaches visible. It stops nobody who is trying.
+   *
+   * Cryptographic enforcement requires `requireProofs` on the channel
+   * anchor, which makes the Groth16 verification below mandatory. Treat
+   * proof-disabled RLN as bookkeeping and do not describe it to users as
+   * spam protection.
    *
    * @returns False when the signal is missing, malformed, or over quota.
    */

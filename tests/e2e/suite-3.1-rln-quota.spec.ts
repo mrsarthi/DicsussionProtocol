@@ -283,9 +283,17 @@ test.describe('Suite 3.1 — ZK-RLN Quota Enforcement', () => {
 });
 
 test.describe('Suite 3.1 — Trusted Setup Provenance (RFC 003 §11)', () => {
-  test('the bundled proving key is flagged as development-only', () => {
-    // A single-party key can forge any claim the circuit makes. Release
-    // tooling MUST refuse to package while this flag is set (§11.4).
-    expect(prover.usesDevelopmentCeremony).toBe(true);
+  test('the bundled proving key came from the real ceremony', () => {
+    // Inverted on 2026-08-11, when the multi-party ceremony completed:
+    // six independent contributors plus a beacon derived from Bitcoin
+    // block 962000, whose hash nobody could predict when the commitment
+    // was published ~400 blocks earlier.
+    //
+    // This assertion is now a regression guard rather than a status
+    // report. A single-party key can forge membership, tier, and
+    // unlimited quota, and every forgery verifies — so if this ever goes
+    // true again, a development key has been packaged and the SDK's
+    // entire security argument is void.
+    expect(prover.usesDevelopmentCeremony).toBe(false);
   });
 });

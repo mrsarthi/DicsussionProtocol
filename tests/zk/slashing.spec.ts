@@ -39,7 +39,7 @@ import {
 import { ShareCollector } from '../../packages/HLessEnd/src/slashing/share-collector.js';
 import {
   createSlashingTombstone,
-  createUserRevocation,
+  createLocalRetirementTombstone,
   encodeTombstoneForSigning,
   RevocationReason,
   verifyTombstone,
@@ -428,7 +428,7 @@ test.describe('ZK — Voluntary Revocation Cannot Be Forged', () => {
     );
 
     const attacker = generateKeypair();
-    const forged = createUserRevocation(victimCommitment, {
+    const forged = createLocalRetirementTombstone(victimCommitment, {
       keypair: attacker,
       did: publicKeyToDidKey(attacker.publicKey),
     });
@@ -450,7 +450,7 @@ test.describe('ZK — Voluntary Revocation Cannot Be Forged', () => {
     const secret = 7n;
     const owner = generateKeypair();
 
-    const own = createUserRevocation(
+    const own = createLocalRetirementTombstone(
       membershipCommitment(secret, deriveTrapdoor(secret)),
       { keypair: owner, did: publicKeyToDidKey(owner.publicKey) },
     );

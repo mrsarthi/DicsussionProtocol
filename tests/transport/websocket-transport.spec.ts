@@ -434,7 +434,7 @@ test.describe('Transport — Full Client over the Relay', () => {
 
     const make = async () =>
       DicsussionClient.init(
-        { storagePath: 'unused' },
+        { storagePath: 'unused', allowUnencryptedStorage: true },
         {
           storage: new IndexedDbDriver({
             factory: new IDBFactory() as unknown as IndexedDbFactoryLike,

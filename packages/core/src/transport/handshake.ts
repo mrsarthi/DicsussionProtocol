@@ -26,9 +26,6 @@ import {
   TransportException,
 } from './types.js';
 
-/** Nonce replay tracker: maps nonce hex → timestamp of receipt. */
-const nonceRegistry = new Map<string, number>();
-
 /**
  * Hard ceiling on tracked nonces.
  *
@@ -43,6 +40,87 @@ const nonceRegistry = new Map<string, number>();
  * failure.
  */
 const MAX_TRACKED_NONCES = 20_000;
+
+/**
+ * Per-node replay tracker: nonce hex → timestamp of receipt.
+ *
+ * **Instance-scoped, deliberately.** This was module-level state, which
+ * meant every `DicsussionClient` in a process shared one registry. Nothing
+ * was exploitable — 32-byte random nonces do not collide across peers, so
+ * no legitimate handshake was ever rejected because of a neighbour — but
+ * it coupled instances that should be independent: a multi-tenant host,
+ * an app embedding several nodes, and the test suite all shared one map.
+ * `clearNonceRegistry()` existed solely so tests could work around it,
+ * which is the tell.
+ *
+ * Each transport now owns one. Dropping the transport drops its nonces
+ * with it, rather than leaving them attached to the module for the life
+ * of the process.
+ */
+export class NonceRegistry {
+  private readonly seen = new Map<string, number>();
+
+  /** Tracked entries, after any pruning that has occurred. */
+  get size(): number {
+    return this.seen.size;
+  }
+
+  /**
+   * Record a nonce, rejecting it if already seen.
+   *
+   * @param nonceHex Hex encoding of the 32-byte nonce.
+   * @param nowS Current unix time in seconds.
+   * @throws {TransportException} If this nonce was already recorded.
+   */
+  admit(nonceHex: string, nowS: number): void {
+    this.prune(nowS);
+
+    // Check and insert stay adjacent and synchronous — see the note in
+    // `processHandshakeInit` on why an `await` between them would open a
+    // real TOCTOU window.
+    if (this.seen.has(nonceHex)) {
+      throw new TransportException(
+        TransportError.ReplayRejected,
+        'Nonce replay detected',
+      );
+    }
+
+    this.seen.set(nonceHex, nowS);
+  }
+
+  /** Drop expired entries, then evict oldest-first if still over the cap. */
+  prune(nowS: number): void {
+    for (const [key, timestamp] of this.seen) {
+      if (nowS - timestamp > NONCE_EXPIRY_S) {
+        this.seen.delete(key);
+      }
+    }
+
+    // Map iterates in insertion order, so the front is the oldest.
+    if (this.seen.size > MAX_TRACKED_NONCES) {
+      const excess = this.seen.size - MAX_TRACKED_NONCES;
+      let dropped = 0;
+
+      for (const key of this.seen.keys()) {
+        this.seen.delete(key);
+        if (++dropped >= excess) break;
+      }
+    }
+  }
+
+  /** Forget every tracked nonce. */
+  clear(): void {
+    this.seen.clear();
+  }
+}
+
+/**
+ * Registry used when a caller supplies none.
+ *
+ * Kept so `processHandshakeInit` stays callable with three arguments —
+ * transports pass their own, and only ad-hoc callers land here.
+ */
+const defaultNonceRegistry = new NonceRegistry();
 
 const encoder = new TextEncoder();
 
@@ -176,28 +254,6 @@ function toHex(bytes: Uint8Array): string {
 }
 
 /**
- * Prune expired nonces older than NONCE_EXPIRY_S from the registry.
- */
-function pruneExpiredNonces(nowS: number): void {
-  for (const [key, timestamp] of nonceRegistry) {
-    if (nowS - timestamp > NONCE_EXPIRY_S) {
-      nonceRegistry.delete(key);
-    }
-  }
-
-  // Map iterates in insertion order, so the front is the oldest.
-  if (nonceRegistry.size > MAX_TRACKED_NONCES) {
-    const excess = nonceRegistry.size - MAX_TRACKED_NONCES;
-    let dropped = 0;
-
-    for (const key of nonceRegistry.keys()) {
-      nonceRegistry.delete(key);
-      if (++dropped >= excess) break;
-    }
-  }
-}
-
-/**
  * Create a HandshakeInit message with a fresh 32-byte nonce.
  *
  * @param keypair The initiator's Ed25519 keypair.
@@ -242,6 +298,7 @@ export function processHandshakeInit(
   init: HandshakeInit,
   responderKeypair: Ed25519KeyPair,
   localTimestampS?: number,
+  nonces?: NonceRegistry,
 ): { challenge: HandshakeChallenge; clockOffset: number; sessionKey: Uint8Array } {
   const localTime = localTimestampS ?? Math.floor(Date.now() / 1000);
   const clockOffset = calculateClockOffset(init.timestamp, localTime);
@@ -278,16 +335,7 @@ export function processHandshakeInit(
   // complete the handshake (the ack needs the initiator's key), and the
   // initiator succeeds on retry with a fresh nonce. It is no escalation
   // — an on-path attacker can already drop the packet outright.
-  const nonceHex = toHex(init.nonce);
-  pruneExpiredNonces(localTime);
-
-  if (nonceRegistry.has(nonceHex)) {
-    throw new TransportException(
-      TransportError.ReplayRejected,
-      'Nonce replay detected',
-    );
-  }
-  nonceRegistry.set(nonceHex, localTime);
+  (nonces ?? defaultNonceRegistry).admit(toHex(init.nonce), localTime);
 
   // Responder's ephemeral half. The secret is used once, here, to derive
   // the session key and is then dropped — it is never stored.
@@ -427,5 +475,5 @@ export function calculateEpoch(localTimestampS: number, peerOffsetS: number): nu
  * Clear the nonce replay registry. Useful for testing.
  */
 export function clearNonceRegistry(): void {
-  nonceRegistry.clear();
+  defaultNonceRegistry.clear();
 }

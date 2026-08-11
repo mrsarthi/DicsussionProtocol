@@ -26,6 +26,7 @@ import {
   deriveSessionKey,
   HandshakeTag,
   transcriptFor,
+  NonceRegistry,
   processHandshakeInit,
   verifyHandshakeAck,
   verifyHandshakeChallenge,
@@ -126,6 +127,9 @@ interface IrohIncoming {
  * bindings lazily so importing this module never forces the dependency.
  */
 export class IrohTransport implements ITransport {
+  /** Replay tracker scoped to this transport, not shared across instances. */
+  private readonly nonces = new NonceRegistry();
+
   private readonly handlers: ConnectionHandler[] = [];
   private readonly connections = new Set<IrohConnection>();
   private accepting = true;
@@ -313,6 +317,7 @@ export class IrohTransport implements ITransport {
       init,
       this.identity,
       localTimestamp,
+      this.nonces,
     );
 
     await writeJson(control, { challenge, timestamp: localTimestamp });

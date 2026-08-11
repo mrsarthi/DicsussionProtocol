@@ -127,7 +127,7 @@ test.describe('WoT — Replay Protection Across Restart', () => {
 
     try {
       const bob = await DicsussionClient.init({ storagePath: ':memory:' });
-      let alice = await DicsussionClient.init({ storagePath: alicePath });
+      let alice = await DicsussionClient.init({ storagePath: alicePath, storageKey: 'test-at-rest-key' });
 
       alice.addPeer(bob.did, bob.encryptionPublicKey);
       bob.addPeer(alice.did, alice.encryptionPublicKey);
@@ -147,7 +147,7 @@ test.describe('WoT — Replay Protection Across Restart', () => {
 
       // Restart Alice against the same database file.
       await alice.disconnect();
-      alice = await DicsussionClient.init({ storagePath: alicePath });
+      alice = await DicsussionClient.init({ storagePath: alicePath, storageKey: 'test-at-rest-key' });
 
       // The nullifier must still be known, so the replay is refused and
       // the score does not move.

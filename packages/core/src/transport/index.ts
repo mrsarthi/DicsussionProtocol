@@ -55,6 +55,7 @@ export {
   calculateClockOffset,
   calculateEpoch,
   clearNonceRegistry,
+  NonceRegistry,
   createHandshakeAck,
   createHandshakeInit,
   processHandshakeInit,

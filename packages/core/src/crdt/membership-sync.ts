@@ -34,6 +34,7 @@ import { compareFieldBytes } from '../crypto/field.js';
 import type { DepartureRecord } from './membership-departure.js';
 import { DepartureSet } from './membership-departure.js';
 import type { BoundedMembershipTree } from './membership-tree.js';
+import { DEFAULT_MAX_MEMBERS } from './membership-tree.js';
 import {
   decodeDepartureBody,
   decodeMemberListBody,
@@ -46,6 +47,15 @@ import {
   MAX_MEMBERS_PER_FRAME,
   SyncMessageType,
 } from './sync-protocol.js';
+
+/**
+ * Ceiling on commitments buffered from one peer before `is_final`.
+ *
+ * A membership set larger than the tree's own capacity cannot describe a
+ * valid membership, so anything beyond this is either a bug or an attempt
+ * to grow the buffer one legally-sized frame at a time.
+ */
+const MAX_PENDING_COMMITMENTS = DEFAULT_MAX_MEMBERS;
 
 /** Resolves the membership tree backing a channel. */
 export type MembershipResolver = (
@@ -238,6 +248,24 @@ export class MembershipSyncEngine {
 
     const { commitments, isFinal } = decodeMemberListBody(body);
     const state = this.stateFor(peerId, channelId);
+
+    // Cap the accumulator.
+    //
+    // Individual frames are bounded by the frame codec, but chunks only
+    // merge when `is_final` arrives — so a peer that never sets that flag
+    // could grow this array indefinitely, one bounded frame at a time.
+    //
+    // The tree holds at most `DEFAULT_MAX_MEMBERS` commitments, so a
+    // pending set larger than that cannot describe a valid membership
+    // regardless of intent. Discard the whole accumulation rather than
+    // trimming it: a truncated member list would merge as though the peer
+    // had genuinely departed everyone past the cut.
+    if (state.pending.length + commitments.length > MAX_PENDING_COMMITMENTS) {
+      state.pending = [];
+      state.responded = false;
+      return [];
+    }
+
     state.pending.push(...commitments);
 
     if (!isFinal) return [];

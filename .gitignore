@@ -56,6 +56,40 @@ _*/
 *.key
 !packages/**/*.key.ts
 
+# A project-local .npmrc is where an npm auth token ends up — either
+# written by `npm login` or pasted in to configure a registry. Publishing
+# this repo with one committed hands anyone push access to the
+# @dicsussion scope, and npm tokens do not expire on their own.
+#
+# If you need a token-free .npmrc for registry config, add it explicitly:
+#   git add -f .npmrc
+.npmrc
+.yarnrc
+.yarnrc.yml
+
+# ─── Packaging output ─────────────────────────────────────────────────
+# `npm pack` writes a tarball beside package.json — 4 MB for core, since
+# it carries the proving key. Easy to create while inspecting a release
+# and easy to commit by accident.
+*.tgz
+*.tar.gz
+
+# ─── Coverage & tool caches ───────────────────────────────────────────
+coverage/
+.nyc_output/
+.cache/
+.turbo/
+.pnpm-store/
+
+# ─── Merge and backup leftovers ───────────────────────────────────────
+# `*.orig` and `*.rej` appear after a conflicted merge; committing one
+# publishes both sides of a conflict, which is how the ceremony repo
+# ended up with `<<<<<<<` markers in a published hash file.
+*.orig
+*.rej
+*.bak
+*~
+
 # ─── Logs ─────────────────────────────────────────────────────────────
 *.log
 npm-debug.log*

@@ -373,7 +373,7 @@ test.describe('Storage — Full Client on IndexedDB', () => {
     const factory = new IDBFactory() as unknown as IndexedDbFactoryLike;
 
     const client = await DicsussionClient.init(
-      { storagePath: 'unused-when-injected' },
+      { storagePath: 'unused', storageKey: 'browser-at-rest-key' },
       { storage: new IndexedDbDriver({ factory }) },
     );
 
@@ -401,14 +401,14 @@ test.describe('Storage — Full Client on IndexedDB', () => {
     const factory = new IDBFactory() as unknown as IndexedDbFactoryLike;
 
     const first = await DicsussionClient.init(
-      { storagePath: 'unused' },
+      { storagePath: 'unused', storageKey: 'browser-at-rest-key' },
       { storage: new IndexedDbDriver({ factory }) },
     );
     const originalDid = first.did;
     await first.disconnect();
 
     const second = await DicsussionClient.init(
-      { storagePath: 'unused' },
+      { storagePath: 'unused', storageKey: 'browser-at-rest-key' },
       { storage: new IndexedDbDriver({ factory }) },
     );
 
@@ -427,7 +427,7 @@ test.describe('Storage — Full Client on IndexedDB', () => {
     const driver = new IndexedDbDriver({ factory });
 
     const client = await DicsussionClient.init(
-      { storagePath: 'unused' },
+      { storagePath: 'unused', storageKey: 'browser-at-rest-key' },
       { storage: driver },
     );
 
