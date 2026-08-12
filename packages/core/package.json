@@ -1,12 +1,13 @@
 {
   "name": "@dicsussion/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Dicsussion protocol engine â€” transport, crypto, CRDT sync, and zero-knowledge anti-spam (RFC 001â€“003)",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
     "./transport": {
       "types": "./dist/transport/index.d.ts",
+      "browser": "./dist/transport/index.browser.js",
       "default": "./dist/transport/index.js"
     },
     "./crypto": {
@@ -19,6 +20,7 @@
     },
     "./zk": {
       "types": "./dist/zk/index.d.ts",
+      "browser": "./dist/zk/index.browser.js",
       "default": "./dist/zk/index.js"
     }
   },
@@ -50,14 +52,6 @@
   },
   "publishConfig": {
     "access": "public"
-  },
-  "browser": {
-    "./dist/transport/iroh-transport.js": false,
-    "./dist/transport/iroh-connection.js": false,
-    "./dist/transport/mdns-discovery.js": false,
-    "./dist/transport/datagram-socket.js": false,
-    "./dist/zk/prover.js": false,
-    "./dist/zk/artifact-paths.js": false
   },
   "repository": {
     "type": "git",

@@ -1,12 +1,13 @@
 {
   "name": "@dicsussion/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Dicsussion headless backend and client SDK â€” local-first, end-to-end encrypted, metadata-private messaging (RFC 004)",
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "browser": "./dist/browser.js",
       "default": "./dist/index.js"
     },
     "./browser": {
@@ -23,7 +24,7 @@
     "build": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@dicsussion/core": "0.1.0",
+    "@dicsussion/core": "0.1.1",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.0.1",
     "@scure/bip39": "^2.2.0",
@@ -34,7 +35,7 @@
     "access": "public"
   },
   "browser": {
-    "./dist/storage/sqlite-driver.js": false
+    "./dist/engine-bootstrap.js": "./dist/engine-bootstrap.browser.js"
   },
   "repository": {
     "type": "git",
