@@ -81,7 +81,9 @@ export interface ClientConfig {
    * nothing appears wrong. It exists so tests can run before a real
    * ceremony has happened.
    *
-   * See `docs/TRUSTED_SETUP_CEREMONY.md`.
+   * The ceremony behind the shipped key, with every contribution hash
+   * and the beacon commitment, is published at
+   * github.com/mrsarthi/Ceremonial-Contributions.
    */
   allowDevelopmentCeremony?: boolean;
 }

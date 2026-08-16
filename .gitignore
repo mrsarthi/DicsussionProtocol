@@ -1,6 +1,22 @@
 # App-specific strategy notes, kept out of the protocol repo
 /.agents
-/docs
+
+# Kept on disk, deliberately unpublished.
+#
+#   Analysis                  commissioned feasibility reviews and the
+#                             vision document behind them — working
+#                             material, not a record of the protocol
+#   SECURITY_BACKLOG.md       live items with severities; a map of where
+#                             to push before the fixes land
+#   TRUSTED_SETUP_CEREMONY.md working notes. The authoritative record —
+#                             contribution hashes, the beacon commitment
+#                             and the verification transcript — is public
+#                             at github.com/mrsarthi/Ceremonial-Contributions
+#   LAUNCH_POST.md            unposted drafts
+/docs/Analysis
+/docs/SECURITY_BACKLOG.md
+/docs/TRUSTED_SETUP_CEREMONY.md
+/docs/LAUNCH_POST.md
 
 # ─── Dependencies & build output ──────────────────────────────────────
 node_modules/

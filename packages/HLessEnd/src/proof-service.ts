@@ -114,7 +114,8 @@ export class ProofService {
     throw new Error(
       'Refusing to use a proving key from a single-party development ' +
         'ceremony: it provides no security, and forged proofs would verify ' +
-        'silently. Run a multi-party ceremony (docs/TRUSTED_SETUP_CEREMONY.md), ' +
+        'silently. Run a multi-party ceremony — see ' +
+        'github.com/mrsarthi/Ceremonial-Contributions — ' +
         'or pass `allowDevelopmentCeremony: true` if this is a test or a ' +
         'local development build.',
     );

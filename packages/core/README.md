@@ -119,7 +119,8 @@ Node-only today. In a browser `resolveArtifacts()` returns `null`.
 
 Proving keys come from a six-contributor Phase 2 ceremony sealed with
 the hash of Bitcoin block 962000 —
-[details](https://github.com/mrsarthi/DicsussionProtocol/blob/main/docs/TRUSTED_SETUP_CEREMONY.md).
+[every contribution hash, the beacon commitment, and the verification
+transcript](https://github.com/mrsarthi/Ceremonial-Contributions).
 
 ---
 
