@@ -10,10 +10,20 @@
  *
  * Two machines:
  *   1. Run `npm run peer` on both.
- *   2. Copy the ticket printed by one, paste it into the other's
- *      `/connect` command.
- *   3. Type to chat. `/status` shows whether the path is direct or
+ *   2. `/pair` each other's tickets — BOTH sides, in both directions.
+ *   3. `/connect` on ONE side only.
+ *   4. Type to chat. `/status` shows whether the path is direct or
  *      relayed — the thing that actually needs verifying on real NATs.
+ *
+ * WHY PAIRING IS ITS OWN STEP. Pairing is mutual (RFC 001 §3.3): a peer
+ * that has not registered your X25519 key cannot decrypt anything you
+ * send, and drops it with no error at either end. `/connect` registers
+ * the key of whoever you dial, which covers the dialer and nobody else —
+ * so a single `/connect` leaves the accepting side unable to read a word.
+ * Dialling from both sides does not fix it either; that opens two
+ * connections for one peer pair, and the session layer expects one.
+ *
+ * Hence: pair both ways, dial once.
  *
  * Relays are ENABLED here (unlike the test suite), because traversing a
  * real NAT is the point.
@@ -47,17 +57,48 @@ const client = await DicsussionClient.init(
   { transport: 'iroh' },
 );
 
+/**
+ * Wait until the endpoint has finished discovering how it is reachable.
+ *
+ * Binding is instant; learning a public address via STUN and registering
+ * with a relay is not. A ticket printed before that carries only LAN and
+ * link-local addresses, so it works on the same network and is undialable
+ * from anywhere else — which looks exactly like a NAT traversal failure
+ * and is the single easiest way to waste an afternoon with two laptops.
+ */
+async function awaitReachability(timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (client.getTicket().derpRelay) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
 say();
 say('  Dicsussion peer');
 say('  ───────────────');
 say(`  did      ${client.did}`);
 say(`  storage  ${storagePath}${storageKey ? ' (encrypted)' : ' (PLAINTEXT — dev only)'}`);
 say();
+say('  … discovering how this node is reachable');
+
+await awaitReachability();
+
+const ticket = client.getTicket();
+if (!ticket.derpRelay) {
+  say('  ! no relay registered — this ticket may only work on your own network');
+}
+
+say();
 say('  Your ticket — paste this into the other device:');
 say();
-say(`  ${encodeTicket(client.getTicket())}`);
+say(`  ${encodeTicket(ticket)}`);
 say();
-say('  Commands: /connect <ticket> · /status · /peers · /history · /ticket · /quit');
+say('  1. /pair <ticket>     on BOTH sides, with each other\'s ticket');
+say('  2. /connect <ticket>  on ONE side only');
+say();
+say('  Also: /status · /peers · /history · /ticket · /quit');
 say('  Anything else is sent as a message.');
 say();
 
@@ -119,15 +160,29 @@ async function handle(input: string): Promise<void> {
   const argument = rest.join(' ');
 
   switch (command) {
+    case '/pair': {
+      if (!argument) throw new Error('Usage: /pair <ticket>');
+
+      const peer = decodeTicket(argument);
+      if (!peer.encryptionKey) {
+        throw new Error(`Ticket for ${peer.didKey} carries no encryption key`);
+      }
+
+      client.addPeer(peer.didKey, peer.encryptionKey);
+      say(`  ✓ paired with ${peer.didKey.slice(0, 24)}…`);
+      say('    (they must /pair you too, or nothing you send arrives)');
+      return;
+    }
+
     case '/connect': {
       if (!argument) throw new Error('Usage: /connect <ticket>');
 
-      const ticket = decodeTicket(argument);
-      // The ticket carries the X25519 key, so pasting it *is* the
-      // pairing step (RFC 001 §3.3).
-      say(`  … dialling ${ticket.didKey.slice(0, 24)}…`);
+      const peer = decodeTicket(argument);
+      // Dialling registers this peer's key on *our* side only. The far
+      // side needs its own `/pair` — see the note at the top of the file.
+      say(`  … dialling ${peer.didKey.slice(0, 24)}…`);
 
-      await client.connect(ticket);
+      await client.connect(peer);
       say('  ✓ connected');
       return;
     }

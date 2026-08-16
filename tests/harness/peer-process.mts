@@ -88,6 +88,22 @@ async function handle(command: Command): Promise<unknown> {
       client.addPeer(command['did'] as string, command['key'] as Uint8Array);
       return null;
 
+    /**
+     * Pair from a ticket alone — what an application actually has.
+     *
+     * `addPeer` above takes a raw X25519 key, which a user never sees. A
+     * real pairing flow starts from a pasted or scanned ticket, so this
+     * op exists to exercise that path rather than the harness shortcut.
+     */
+    case 'pairFromTicket': {
+      const ticket = command['ticket'] as PeerTicket;
+      if (!ticket.encryptionKey) {
+        throw new Error(`Ticket for ${ticket.didKey} carries no encryption key`);
+      }
+      client.addPeer(ticket.didKey, ticket.encryptionKey);
+      return null;
+    }
+
     case 'connect':
       await client.connect(command['ticket'] as PeerTicket);
       return null;
