@@ -374,6 +374,44 @@ something no application can do.
 - [x] Both packages bumped to 0.2.0, including the SDK's exact pin on
   `@dicsussion/core`.
 
+### snarkjs is now an optional peer dependency
+Caught by the tarball pre-flight, not by the repo. `npm audit` here
+reports zero because the root `package.json` overrides `underscore` —
+**and npm overrides are root-only, so they do not reach consumers.**
+Installing the 0.2.0 tarballs into a clean project produced:
+
+```
+@dicsussion/core → snarkjs 0.7.6 → bfj 7.1.0 → jsonpath → underscore ≤1.13.7
+3 high severity vulnerabilities
+```
+
+No upgrade clears it: 0.7.6 is the latest snarkjs and still requires
+`bfj ^7.0.2`, and every `bfj` in range is flagged.
+
+- [x] `snarkjs` moved from `optionalDependencies` to `peerDependencies`
+  with `peerDependenciesMeta.optional`. It was already reached only
+  through a lazy `import()` in `zk/prover.ts`, nothing references it
+  statically, and v1 runs with `zkProofs: 'off'` — so the default
+  install now carries neither the prover nor the advisory.
+- [x] `loadSnarkjs` reports its absence in words. It is an expected
+  state now, and `ERR_MODULE_NOT_FOUND` names the module without saying
+  what to do about it.
+
+Consumers who want proving run `npm install snarkjs`. **This needs a
+release note** — it is the one behaviour change in 0.2.0.
+
+### Pre-flight, against the packed tarballs rather than the repo
+Every published artifact so far has had a bug invisible from inside the
+repo (Findings 1, 8, 10), so 0.2.0 was verified from a clean project
+installing `.tgz` files:
+
+| Check | Result |
+|---|---|
+| Consumer typecheck, `skipLibCheck: false` | pass — Finding 12 closed, new exports reachable |
+| Bridged transport, one byte per `onData` | pass — handshake, key agreement, delivery |
+| EchoIt's own `two-peer.mts` | **3/3** over real QUIC, path direct |
+| `npm audit` as a consumer | **0 vulnerabilities** |
+
 ### Known gap
 `tsconfig.json` excludes `tests/`, so specs are never typechecked. A
 plain type error in the new suite surfaced only as a 30-second timeout.

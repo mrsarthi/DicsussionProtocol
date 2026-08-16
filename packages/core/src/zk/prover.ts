@@ -249,7 +249,26 @@ interface SnarkjsModule {
  * It is a heavy dependency and only needed once proving actually
  * happens, so importing it at module scope would tax every consumer of
  * the SDK — including those that never generate a proof.
+ *
+ * It is also an *optional peer* dependency rather than a direct one:
+ * snarkjs pulls a transitive `underscore` carrying a known DoS advisory,
+ * and shipping it by default would hand that to every consumer,
+ * including the majority who run with `zkProofs: 'off'` and never prove
+ * anything. Consumers who do want proving install it themselves.
+ *
+ * Which means absence is now an ordinary, expected state, and has to say
+ * so — a bare `ERR_MODULE_NOT_FOUND` from a dynamic import names the
+ * module and nothing about how to fix it.
  */
 async function loadSnarkjs(): Promise<SnarkjsModule> {
-  return (await import('snarkjs')) as unknown as SnarkjsModule;
+  try {
+    return (await import('snarkjs')) as unknown as SnarkjsModule;
+  } catch (cause) {
+    throw new Error(
+      'Zero-knowledge proving needs the optional peer dependency `snarkjs`, ' +
+        'which is not installed. Run `npm install snarkjs`, or leave ' +
+        "`zkProofs: 'off'` if you do not need proofs.",
+      { cause },
+    );
+  }
 }

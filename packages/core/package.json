@@ -47,8 +47,15 @@
     "uuid": "^14.0.1"
   },
   "optionalDependencies": {
-    "@number0/iroh": "^1.1.0",
+    "@number0/iroh": "^1.1.0"
+  },
+  "peerDependencies": {
     "snarkjs": "^0.7.6"
+  },
+  "peerDependenciesMeta": {
+    "snarkjs": {
+      "optional": true
+    }
   },
   "publishConfig": {
     "access": "public"
