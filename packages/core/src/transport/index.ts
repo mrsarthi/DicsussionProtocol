@@ -152,6 +152,19 @@ export type {
   WebSocketLike,
   WebSocketTransportOptions,
 } from './websocket-transport.js';
+// Bridged transport over a host-supplied byte pipe (RFC 001 §4)
+export {
+  BRIDGE_HANDSHAKE_TIMEOUT_MS,
+  createBridgedTransport,
+} from './bridged-transport.js';
+
+export type { BridgedTransportOptions } from './bridged-transport.js';
+
+export type {
+  BridgeInbound,
+  BridgePipe,
+  BridgeTarget,
+} from './bridge-pipe.js';
 export {
   decodeRelayMessage,
   encodeRelayMessage,

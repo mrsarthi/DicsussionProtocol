@@ -134,6 +134,22 @@ export type {
   WebSocketTransportOptions,
 } from './websocket-transport.js';
 
+// Bridged transport (RFC 001 §4). Pure TypeScript over a host-supplied
+// byte pipe, so unlike the Iroh path it works unchanged in a webview —
+// which is the entire reason it exists.
+export {
+  BRIDGE_HANDSHAKE_TIMEOUT_MS,
+  createBridgedTransport,
+} from './bridged-transport.js';
+
+export type { BridgedTransportOptions } from './bridged-transport.js';
+
+export type {
+  BridgeInbound,
+  BridgePipe,
+  BridgeTarget,
+} from './bridge-pipe.js';
+
 export {
   decodeRelayMessage,
   encodeRelayMessage,
