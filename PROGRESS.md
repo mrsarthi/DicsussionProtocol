@@ -315,7 +315,7 @@ weaknesses with file and line).
 
 ---
 
-## Task: 0.2.0 — Bridged transport and the pairing seam
+## Task: 0.3.0 — Bridged transport and the pairing seam
 **Status:** ✅ COMPLETE (unpublished)
 **Date:** 2026-08-16
 

@@ -208,6 +208,15 @@ class BridgedTransport implements ITransport {
       this.pipe.onInbound((id, info) => void this.accept(id, info)),
       this.pipe.onClosed((id) => this.teardown(id)),
     );
+
+    // Warm the cache immediately, so `getTicket()` is not silently
+    // address-less until someone thinks to refresh. Fire-and-forget
+    // because construction is synchronous: a host that is not ready to
+    // answer yet simply leaves the snapshot empty, and callers that need
+    // a dialable ticket still await `refreshAddresses()` first.
+    void this.refreshAddresses().catch(() => {
+      // A host with no addresses to report yet is not an error.
+    });
   }
 
   async connect(ticket: PeerTicket): Promise<IConnection> {

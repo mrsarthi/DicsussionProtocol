@@ -1,6 +1,6 @@
 {
   "name": "@dicsussion/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Dicsussion protocol engine â€” transport, crypto, CRDT sync, and zero-knowledge anti-spam (RFC 001â€“003)",
   "type": "module",
   "license": "Apache-2.0",
