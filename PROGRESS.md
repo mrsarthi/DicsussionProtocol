@@ -316,7 +316,7 @@ weaknesses with file and line).
 ---
 
 ## Task: 0.3.0 — Bridged transport and the pairing seam
-**Status:** ✅ COMPLETE (unpublished)
+**Status:** ✅ COMPLETE — published, tagged, released
 **Date:** 2026-08-16
 
 Requested by the EchoIt app agent, which is blocked at its S1b gate: the
@@ -371,14 +371,14 @@ something no application can do.
 - [x] `@types/better-sqlite3` promoted to a runtime dependency; the
   shipped `.d.ts` files import it, so every TypeScript consumer of the
   root entry failed to typecheck without it.
-- [x] Both packages bumped to 0.2.0, including the SDK's exact pin on
+- [x] Both packages bumped, including the SDK's exact pin on
   `@dicsussion/core`.
 
 ### snarkjs is now an optional peer dependency
 Caught by the tarball pre-flight, not by the repo. `npm audit` here
 reports zero because the root `package.json` overrides `underscore` —
 **and npm overrides are root-only, so they do not reach consumers.**
-Installing the 0.2.0 tarballs into a clean project produced:
+Installing the tarballs into a clean project produced:
 
 ```
 @dicsussion/core → snarkjs 0.7.6 → bfj 7.1.0 → jsonpath → underscore ≤1.13.7
@@ -398,11 +398,11 @@ No upgrade clears it: 0.7.6 is the latest snarkjs and still requires
   what to do about it.
 
 Consumers who want proving run `npm install snarkjs`. **This needs a
-release note** — it is the one behaviour change in 0.2.0.
+release note** — it is one of two behaviour changes in this release.
 
 ### Pre-flight, against the packed tarballs rather than the repo
 Every published artifact so far has had a bug invisible from inside the
-repo (Findings 1, 8, 10), so 0.2.0 was verified from a clean project
+repo (Findings 1, 8, 10), so this was verified from a clean project
 installing `.tgz` files:
 
 | Check | Result |
@@ -412,38 +412,104 @@ installing `.tgz` files:
 | EchoIt's own `two-peer.mts` | **3/3** over real QUIC, path direct |
 | `npm audit` as a consumer | **0 vulnerabilities** |
 
-### Known gap
+### Then 0.2.0 shipped the bridge unusable, and 0.3.0 fixed it
+Published as 0.2.0, and `createBridgedTransport` could not be reached
+from an application at all. Two independent gaps, either fatal alone,
+both found only while writing the documentation — because writing a
+usage example is the first thing that forces the consumer's path.
+
+1. **No way to obtain the identity.** The transport needs the node's
+   Ed25519 keypair, derived inside `init()` from a seed the caller never
+   holds. `transport: <ITransport>` was therefore usable only by a
+   transport that does not authenticate as the node, and there is none.
+   Fixed with `TransportFactory` — the client calls it during bootstrap
+   with the derived identity.
+2. **No way to publish a dialable ticket.** `getTicket()` special-cased
+   `IrohTransport` with `instanceof`; every other transport got a
+   synthesised ticket with no transport key and no addresses, so two
+   bridged peers could never dial each other. Now a capability check,
+   plus `BridgePipe.addresses()` — the SDK derives the key, only the host
+   knows the addresses behind it.
+
+**Why they were missed.** The transport had 25 tests across three
+chunking modes, all constructing it directly with a generated keypair.
+The unit was covered; the joint was not. The pre-flight did not catch it
+either — it proved *packaging* (audit, typecheck, an external harness),
+and that harness runs `transport: 'iroh'`, so it never touched the new
+feature. Verifying the artifact ships correctly is not verifying the
+feature works, and the two were reported as one.
+
+Also worth recording: the app agent specified `createBridgedTransport(pipe)`
+— **one argument** — in two separate documents. Implementing it with a
+second `{ identity }` parameter is what created the circular dependency.
+The stated reason for wanting the function was to keep security-critical
+sequencing inside the SDK, and requiring the caller to supply an identity
+key is the opposite of that.
+
+Closed by a test that runs two real clients through a bridge, which is
+the shape nothing exercised before.
+
+### Released
+- **0.3.0 on npm**, both packages. A minor rather than a patch because
+  `BridgePipe` gained a required method; no implementation could exist,
+  but a published interface changed and the version should say so.
+- Tags `v0.2.0` and `v0.3.0` pushed. 0.2.0 was tagged retroactively so
+  the published version is traceable to source, with no release page —
+  advertising a version whose headline feature does not work is not
+  useful, and the annotated tag says as much.
+- GitHub releases cut for `v0.3.0` and, finally, `v0.1.0` — its notes had
+  sat unused since launch, and there had been no releases at all.
+- Both packages carry a README for the first time; their npm pages were
+  blank through four published versions.
+
+### Known gaps
 `tsconfig.json` excludes `tests/`, so specs are never typechecked. A
 plain type error in the new suite surfaced only as a 30-second timeout.
 Not fixed here — it wants its own change.
 
+A pre-flight can silently pass against a stale artifact: npm reuses an
+extracted copy when the tarball filename and version are unchanged, so
+re-packing into the same directory verifies the *previous* build. Caught
+only because a value that should have changed did not. Pre-flights must
+run in a directory that has never seen an earlier tarball.
+
 ---
 
-## Current State (2026-08-11)
+## Current State (2026-08-16)
 
 | | |
 |---|---|
-| Tests | **488 passing, 0 failing** |
+| Version | **0.3.0**, both packages |
+| Tests | **528 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
-| `npm audit` | 0 vulnerabilities |
+| `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | **not yet** — pending commit |
+| Published | **yes** — npm, tagged, GitHub release cut |
+| Docs | `HOW_TO_USE.md` + a README on each package |
 
-**Test suites:** 10 e2e, 13 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT.
+**Test suites:** 11 e2e, 14 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT, plus
+the SDK bridge suite.
+
+Verified from a clean install off the registry, not from the repo: consumer
+typecheck with `skipLibCheck: false`, the factory path delivering a message
+over a ticket carrying both a transport key and addresses, and an external
+two-peer harness passing 3/3 over real QUIC.
 
 ---
 
 ## Next Immediate Step
 
-1. Commit the outstanding work in logical chunks (~40 files: licensing,
-   ceremony artifacts, and roughly a dozen security fixes).
-2. Publish `@dicsussion/core`, then `@dicsussion/sdk` — core first, the SDK
-   depends on it.
-3. Tag a GitHub release naming the three known gaps above.
-4. Push `ATTESTATION.md`, `Contribution_7.txt`, and the README update to the
-   Ceremonial-Contributions repo.
+Nothing blocks the consuming app. The protocol side of its mobile gate is
+finished and published.
+
+1. Relay transport encryption — the only open item that is a security hole
+   rather than an unbuilt feature, and the smallest of the serious ones.
+2. A relay server. The SDK speaks the protocol and no reference
+   implementation exists, which is the widest gap between the architecture
+   documents and what is actually running.
+3. Typecheck `tests/`.
 
 ### Deferred (non-blocking)
 - [ ] Relay transport encryption (~1 day) — closes the browser confidentiality gap
@@ -459,4 +525,12 @@ Not fixed here — it wants its own change.
 - [ ] Tier gating — `userScore` is a self-asserted private input, held in check
       by application code on both sides. **Do not enable tiers without binding
       it in the circuit**, or quotas become forgeable 100×.
-- [ ] `exportMnemonic` / `recoverFromMnemonic` / `revokeKey` implementation
+- [x] `exportMnemonic` / `recoverFromMnemonic` / `revokeKey` — **done**, in
+      `identity-service.ts`, covered by `tests/sdk/identity-lifecycle.spec.ts`.
+      Recovery yields the same `did:key` and `cm_identity`, so channel
+      membership survives a lost device; the blind-signing key is regenerated
+      and peers must re-pair before issuing endorsements.
+- [ ] ZK artifacts are filesystem-bound, so proving does not work in a
+      webview (`resolveArtifacts()` returns `null` there)
+- [ ] `BridgePipe` confidentiality is the host's responsibility, and the
+      contract should say so as plainly as the ordering rule does

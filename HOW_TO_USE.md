@@ -28,7 +28,7 @@ npm install @dicsussion/sdk
 ```
 
 **Zero-knowledge proving is opt-in.** `snarkjs` is an optional peer
-dependency as of 0.2.0. Skip it unless you turn proofs on:
+dependency. Skip it unless you turn proofs on:
 
 ```bash
 npm install snarkjs   # only if you need ZK proofs

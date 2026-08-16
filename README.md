@@ -16,7 +16,7 @@
 ---
 
 > [!IMPORTANT]
-> **v0.1.0 — first public release. Read this before depending on it.**
+> **v0.3.0 — read this before depending on it.**
 >
 > The Groth16 proving key is the output of a **completed six-party trusted
 > setup**, closed with a Bitcoin block hash committed to publicly three days
@@ -40,9 +40,14 @@
 >   committed to the membership tree. Blocked in code rather than silently
 >   trusted — do not enable tiers without changing the circuit.
 >
-> Chat content at rest is also unencrypted; identity secrets are not. No
-> external security audit has been performed. Two internal audits and their
-> outcomes are recorded in `PROGRESS.md`.
+> Beyond those three: chat content at rest is unencrypted, though identity
+> secrets are not. Forward secrecy is per-session rather than per-message. One
+> device per identity. No relay server ships, so there is no offline delivery
+> to a sleeping phone. No external security audit has been performed — two
+> internal audits and their outcomes are recorded in `PROGRESS.md`.
+>
+> [`HOW_TO_USE.md`](HOW_TO_USE.md) states all of this in context, alongside
+> the behaviours that will otherwise cost you a day.
 
 ---
 
