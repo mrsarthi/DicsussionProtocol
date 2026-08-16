@@ -315,6 +315,72 @@ weaknesses with file and line).
 
 ---
 
+## Task: 0.2.0 — Bridged transport and the pairing seam
+**Status:** ✅ COMPLETE (unpublished)
+**Date:** 2026-08-16
+
+Requested by the EchoIt app agent, which is blocked at its S1b gate: the
+Rust half of its Tauri bridge is done, but no `ITransport` could be built
+from the public API without reimplementing session-key derivation and
+transcript binding outside the SDK.
+
+### `createBridgedTransport` (RFC 001 §4)
+- [x] `bridge-pipe.ts` — the host contract. **Ordered bytes, nothing
+  more:** a host may split one `send` across several `onData` calls or
+  coalesce many into one, and both are correct.
+- [x] `pipe-reader.ts` — length-prefixed control messages during the
+  handshake, frames afterwards. The prefix format is lifted verbatim from
+  `iroh-transport.ts` (4-byte big-endian, 64 KB ceiling), because the
+  Iroh control stream is a byte stream with the identical problem.
+- [x] `bridged-transport.ts` — the transport. The handshake is
+  `WebSocketTransport`'s, generalised over the byte sink.
+
+**Why the SDK frames rather than the host.** The alternative was to
+require hosts to preserve message boundaries. Rejected: it pushes
+security-critical sequencing back out to every consumer, duplicates the
+same framing in Tauri, React Native and Electron, and fails only
+mid-handshake under coalescing — so it works on loopback and breaks on a
+real network under load.
+
+**Accepted cost, documented in the module header.** One pipe carries all
+six sub-streams, so RFC 001 §6 preemption weakens from QUIC stream
+priority to send-queue ordering. Bounded by the frame ceiling, not a
+stall. `IrohTransport` keeps the stronger guarantee.
+
+### Pairing from tickets
+`connect(ticket)` registers the peer's X25519 key on the **dialer's** side
+only, so the accepter could not decrypt and dropped frames silently. Every
+suite hid this by pairing through `addPeer` with raw keys out of band —
+something no application can do.
+
+- [x] `suite-4.3-ticket-pairing.spec.ts` — cross-process, real QUIC,
+  paired from tickets alone. Includes the non-delivery assertion and the
+  case that matters for an app: pairing *after* a stranger connects
+  repairs delivery on the open connection, no redial.
+- [x] `scripts/peer-cli.mts` — added `/pair`, and the ticket is now
+  printed only after the endpoint has discovered a public address and
+  registered with a relay. It previously printed at startup, so the
+  ticket carried LAN addresses only and was undialable from any other
+  network. **The CLI had never delivered a message; it now does, both
+  directions, path direct.**
+
+### Smaller items
+- [x] `onPeerConnected` on `DicsussionClient` — `{ peerDid, paired,
+  direction }`. A completed handshake is not authorization, so `paired`
+  is the field that matters.
+- [x] `@types/better-sqlite3` promoted to a runtime dependency; the
+  shipped `.d.ts` files import it, so every TypeScript consumer of the
+  root entry failed to typecheck without it.
+- [x] Both packages bumped to 0.2.0, including the SDK's exact pin on
+  `@dicsussion/core`.
+
+### Known gap
+`tsconfig.json` excludes `tests/`, so specs are never typechecked. A
+plain type error in the new suite surfaced only as a 30-second timeout.
+Not fixed here — it wants its own change.
+
+---
+
 ## Current State (2026-08-11)
 
 | | |
