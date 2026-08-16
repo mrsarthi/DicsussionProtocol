@@ -248,6 +248,11 @@ No global score exists. Every peer sees a different trust landscape shaped by th
 
 - [Node.js](https://nodejs.org/) ≥ 18
 
+> **Building an app on this?** You want
+> **[HOW_TO_USE.md](HOW_TO_USE.md)** — installing from npm, a working
+> first message, and the behaviours that will otherwise cost you a day.
+> What follows is for working on the protocol itself.
+
 ### Install
 
 ```bash
@@ -267,48 +272,67 @@ npm run typecheck   # tsc --noEmit
 ### Try it between two machines
 
 `npm run peer` is a complete node with a terminal instead of a UI — no
-application required. Run it on two machines, paste one's ticket into the
-other, and type. See [`docs/DEVICE_TESTING.md`](docs/DEVICE_TESTING.md),
-including the Termux route for Android.
+application required.
 
 ```bash
-npm run peer
+npm run peer     # on both machines
 ```
+
+Wait for each side to print its ticket — that takes a few seconds,
+because a ticket is only dialable once the node has discovered a public
+address and registered with a relay. Then:
+
+1. `/pair <ticket>` on **both** sides, with each other's ticket
+2. `/connect <ticket>` on **one** side
+3. Type to chat; `/status` shows whether the path is direct or relayed
+
+Pairing is mutual and both steps are load-bearing. A peer who has not
+registered your key drops what you send with no error at either end, so
+a single `/connect` looks connected and delivers nothing — see
+[`HOW_TO_USE.md`](HOW_TO_USE.md#3-pairing-is-mutual-and-failure-is-silent).
+
+See [`docs/DEVICE_TESTING.md`](docs/DEVICE_TESTING.md) for the full
+procedure, including the Termux route for Android.
 
 ---
 
 ## SDK Preview
 
+Two nodes, a paired connection, and a message. The full guide is
+[`HOW_TO_USE.md`](HOW_TO_USE.md).
+
 ```typescript
 import { DicsussionClient } from '@dicsussion/sdk';
 
-// Initialize the headless engine
-const client = await DicsussionClient.init({
-  storagePath: './data',
-  relayEndpoints: ['https://relay1.iroh.network'],
-  proofBackend: 'wasm',
+const alice = await DicsussionClient.init({ storagePath: ':memory:' });
+const bob = await DicsussionClient.init({ storagePath: ':memory:' });
+
+bob.chat.onMessage('general', (msg) => {
+  console.log(`[Tier ${msg.verifiedTier}] ${msg.content}`);
 });
 
-// Send an E2EE message. Anonymous sends carry an RLN rate-limit signal;
-// a Groth16 membership proof is attached only on channels whose signed
-// genesis anchor requires one.
-await client.chat.sendMessage({
+// Pairing is MUTUAL — both directions, or the receiver silently drops
+// everything. A handshake proves key ownership, not that you know them.
+alice.addPeer(bob.did, bob.encryptionPublicKey);
+bob.addPeer(alice.did, alice.encryptionPublicKey);
+
+// Dialling, by contrast, happens once.
+await alice.connect(bob.getTicket());
+
+await alice.chat.sendMessage({
   channelId: 'general',
   content: 'Hello, decentralized world!',
 });
 
-// Listen for incoming messages
-client.chat.onMessage('general', (msg) => {
-  console.log(`[Tier ${msg.verifiedTier}] ${msg.content}`);
-});
-
-// Check a peer's local trust score
-const profile = await client.trust.getProfile('did:key:z6Mkf...');
+// A peer's trust score, computed locally and subjectively.
+const profile = await alice.trust.getProfile(bob.did);
 console.log(`Trust: ${profile.subjectiveScore} POC (Tier ${profile.tier})`);
-
-// Gift a blind endorsement voucher (+5 POC)
-await client.trust.giftEndorsement('did:key:z6Mkf...');
 ```
+
+Real transports are chosen per host — `'iroh'` on desktop, a bridged
+transport in a Tauri or React Native webview, `'websocket'` in a
+browser. `init()` defaults to an in-process transport so the above runs
+with no network and no native module.
 
 ---
 
