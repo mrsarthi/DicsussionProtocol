@@ -31,6 +31,21 @@ export interface BridgeTarget {
   readonly relayUrl?: string;
 }
 
+/** How this node is reachable, as only the host can know. */
+export interface BridgeAddresses {
+  /**
+   * Socket addresses peers can try, e.g. `"203.0.113.4:41641"`.
+   *
+   * Discovery is not instant — a public address arrives from STUN some
+   * time after the socket binds. Report what is known now; a ticket
+   * published too early carries LAN addresses only and is undialable
+   * from any other network.
+   */
+  readonly directAddresses: readonly string[];
+  /** Relay endpoint to publish as a fallback, once one is assigned. */
+  readonly relayUrl?: string;
+}
+
 /** What a host reports about a connection it did not initiate. */
 export interface BridgeInbound {
   /**
@@ -52,6 +67,15 @@ export interface BridgeInbound {
  * interprets it.
  */
 export interface BridgePipe {
+  /**
+   * How this node is currently reachable.
+   *
+   * The SDK derives the transport *key* from the identity, but only the
+   * host knows the *addresses* behind it, so a dialable ticket cannot be
+   * assembled without this.
+   */
+  addresses(): Promise<BridgeAddresses>;
+
   /**
    * Dial a peer.
    *

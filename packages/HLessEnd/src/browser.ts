@@ -41,6 +41,7 @@ export { GroupService } from './group-service.js';
 export { IdentityService } from './identity-service.js';
 export { TrustService } from './trust-service.js';
 
+export type { TransportFactory } from './engine-bootstrap.browser.js';
 export { IndexedDbDriver } from './storage/indexeddb-driver.js';
 export type {
   IndexedDbDriverOptions,

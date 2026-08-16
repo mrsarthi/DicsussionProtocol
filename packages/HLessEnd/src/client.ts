@@ -47,6 +47,7 @@ import {
   initStorage,
   initTransport,
 } from './engine-bootstrap.js';
+import type { TransportFactory } from './engine-bootstrap.js';
 import type { DocumentStore } from './storage/document-store.js';
 import type { MessageStore } from './storage/message-store.js';
 import type { IStorageDriver } from './storage/types.js';
@@ -69,6 +70,11 @@ import type {
   PeerConnectedEvent,
 } from './types.js';
 
+/** A transport that knows how it is reachable and can publish a ticket. */
+interface TicketProvider {
+  getTicket(): PeerTicket;
+}
+
 /** Extra options that are test/embedding seams rather than user config. */
 export interface ClientRuntimeOptions {
   /** UDP port advertised in mDNS beacons. */
@@ -87,7 +93,12 @@ export interface ClientRuntimeOptions {
    * the only backend a browser can use. An `ITransport` instance can
    * also be supplied directly.
    */
-  readonly transport?: 'local' | 'iroh' | 'websocket' | ITransport;
+  readonly transport?:
+    | 'local'
+    | 'iroh'
+    | 'websocket'
+    | ITransport
+    | TransportFactory;
   /** Relay endpoint, required by the `'websocket'` backend. */
   readonly relayUrl?: string;
   /** Socket factory for the `'websocket'` backend. */
@@ -279,9 +290,15 @@ export class DicsussionClient {
     const identity = this.requireIdentity();
     const transport = this.transport;
 
+    // A capability check, not `instanceof`: any transport that knows how
+    // it is reachable can publish a dialable ticket, including a bridged
+    // one supplied by a non-Node host. `instanceof IrohTransport` would
+    // silently hand those callers an address-less ticket instead.
+    const provider = transport as Partial<TicketProvider> | null;
+
     const base: PeerTicket =
-      transport instanceof IrohTransport
-        ? transport.getTicket()
+      typeof provider?.getTicket === 'function'
+        ? provider.getTicket()
         : {
             didKey: identity.did,
             nodeId: identity.signing.publicKey,

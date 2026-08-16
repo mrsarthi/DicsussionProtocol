@@ -8,6 +8,7 @@
 export { DicsussionClient } from './client.js';
 
 export type { ClientRuntimeOptions } from './client.js';
+export type { TransportFactory } from './engine-bootstrap.js';
 // Services (for advanced usage / testing)
 export { ChatService } from './chat-service.js';
 

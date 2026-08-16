@@ -29,7 +29,7 @@
 
 import { IrohTransport } from '@dicsussion/core/transport';
 import { WebSocketTransport } from '@dicsussion/core/transport';
-import type { WebSocketLike } from '@dicsussion/core/transport';
+import type { Ed25519KeyPair, WebSocketLike } from '@dicsussion/core/transport';
 import { LocalTransport } from '@dicsussion/core/transport';
 import { MdnsDiscovery } from '@dicsussion/core/transport';
 import type { IDatagramSocket } from '@dicsussion/core/transport';
@@ -57,6 +57,29 @@ export interface StorageLayer {
   readonly messages: MessageStore;
 }
 
+/**
+ * Build a transport once the local identity exists.
+ *
+ * Transports authenticate as the node, so they need its Ed25519 keypair
+ * — but that is derived during bootstrap from a seed the caller never
+ * holds, which makes a ready-made instance impossible to supply for any
+ * transport that needs one. The client therefore calls this with the
+ * derived identity and uses whatever it returns.
+ *
+ * The natural use is a non-Node host bridging its own socket:
+ *
+ * ```ts
+ * transport: (identity) => createBridgedTransport(pipe, { identity })
+ * ```
+ *
+ * @param identity This node's Ed25519 keypair. The transport public key
+ *   published in tickets is derived from it, so a transport that mints
+ *   its own would advertise an address no peer could dial.
+ */
+export type TransportFactory = (
+  identity: Ed25519KeyPair,
+) => ITransport | Promise<ITransport>;
+
 export interface TransportOptions {
   /**
    * Backend selection; defaults to the in-process transport.
@@ -66,7 +89,12 @@ export interface TransportOptions {
    * instance is also allowed, but note it will carry whatever identity
    * it was built with rather than this client's.
    */
-  readonly transport?: 'local' | 'iroh' | 'websocket' | ITransport;
+  readonly transport?:
+    | 'local'
+    | 'iroh'
+    | 'websocket'
+    | ITransport
+    | TransportFactory;
   readonly bindAddr?: string;
   readonly localOnly?: boolean;
   /** Relay endpoint for the `'websocket'` backend. */
@@ -160,7 +188,12 @@ export async function initTransport(
   const backend = options.transport ?? 'local';
 
   let transport: ITransport;
-  if (typeof backend === 'object') {
+  if (typeof backend === 'function') {
+    // The identity is derived here, during bootstrap, from a seed the
+    // caller never sees — so a transport that needs it cannot be built
+    // before this point. Hence a factory rather than an instance.
+    transport = await backend(identity.signing);
+  } else if (typeof backend === 'object') {
     transport = backend;
   } else if (backend === 'websocket') {
     if (!options.relayUrl) {

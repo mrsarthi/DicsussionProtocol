@@ -25,10 +25,15 @@
  * socket at all.
  */
 
-import type { BridgeInbound, BridgePipe } from './bridge-pipe.js';
+import type {
+  BridgeAddresses,
+  BridgeInbound,
+  BridgePipe,
+} from './bridge-pipe.js';
 import type { Ed25519KeyPair } from './did-key.js';
 import { didKeyToPublicKey, publicKeyToDidKey } from './did-key.js';
 import { encodeFrame } from './frame-codec.js';
+import { deriveTransportKey } from './transport-key.js';
 import {
   calculateClockOffset,
   createHandshakeAck,
@@ -188,6 +193,9 @@ class BridgedTransport implements ITransport {
   private readonly didKey: string;
   private closed = false;
 
+  /** Last reachability snapshot from the host; see `getTicket`. */
+  private addresses: BridgeAddresses = { directAddresses: [] };
+
   constructor(
     private readonly pipe: BridgePipe,
     private readonly options: BridgedTransportOptions,
@@ -286,6 +294,41 @@ class BridgedTransport implements ITransport {
   onConnection(handler: ConnectionHandler): () => void {
     this.connectionHandlers.add(handler);
     return () => this.connectionHandlers.delete(handler);
+  }
+
+  /**
+   * A ticket peers can dial, assembled from both halves.
+   *
+   * The transport key is derived from the identity by one-way HKDF, so
+   * only this side can compute it; the addresses behind it are known
+   * only to the host. Neither half alone is dialable.
+   *
+   * Synchronous, and therefore served from the last snapshot the host
+   * gave us — matching `IrohTransport.getTicket`, which likewise reads
+   * cached endpoint state. Call {@link refreshAddresses} first when the
+   * ticket is about to be published, because address discovery is not
+   * instant: a public address arrives from STUN some time after the
+   * socket binds, and a ticket taken before that carries LAN addresses
+   * only and is undialable from any other network.
+   */
+  getTicket(): PeerTicket {
+    return {
+      didKey: this.didKey,
+      nodeId: this.options.identity.publicKey,
+      directAddresses: this.addresses.directAddresses,
+      transportKey: deriveTransportKey(this.options.identity).publicKey,
+      ...(this.addresses.relayUrl ? { derpRelay: this.addresses.relayUrl } : {}),
+    };
+  }
+
+  /**
+   * Re-read how the host says this node is reachable.
+   *
+   * @returns The refreshed snapshot, also cached for {@link getTicket}.
+   */
+  async refreshAddresses(): Promise<BridgeAddresses> {
+    this.addresses = await this.pipe.addresses();
+    return this.addresses;
   }
 
   async close(): Promise<void> {

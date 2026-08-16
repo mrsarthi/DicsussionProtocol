@@ -59,6 +59,8 @@ class TestBus {
     this.closedHandlers.set(side, new Set());
 
     return {
+      addresses: async () => ({ directAddresses: ['127.0.0.1:1'] }),
+
       connect: async (_target: BridgeTarget) => {
         const id = `c${++this.counter}`;
         // The far side learns of the channel before any bytes arrive,
@@ -381,6 +383,7 @@ test.describe('Bridged transport — failure handling', () => {
   test('a stalled handshake times out rather than hanging', async () => {
     // A pipe that accepts a dial and then says nothing.
     const silent: BridgePipe = {
+      addresses: async () => ({ directAddresses: [] }),
       connect: async () => 'c1',
       send: async () => {},
       onData: () => () => {},
