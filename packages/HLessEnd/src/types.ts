@@ -94,6 +94,26 @@ export interface NetworkStatus {
   readonly lastSyncTimestamp: number;
 }
 
+/** A peer that has completed the handshake. */
+export interface PeerConnectedEvent {
+  /**
+   * The peer's did:key, proven by the RFC 001 §5 handshake.
+   *
+   * Proven, but not *trusted*: the handshake shows the far side holds the
+   * secret behind this identifier, not that it is anyone you know.
+   */
+  readonly peerDid: string;
+  /**
+   * Whether this peer was paired out of band (RFC 001 §3.3).
+   *
+   * `false` means a stranger completed a handshake. They can send
+   * nothing and receive nothing until paired.
+   */
+  readonly paired: boolean;
+  /** Whether we dialled them, or they dialled us. */
+  readonly direction: 'outbound' | 'inbound';
+}
+
 /** Options for sending a message. */
 export interface SendMessageOptions {
   readonly channelId: string;

@@ -72,6 +72,7 @@ export type {
   GroupInvite,
   Identity,
   NetworkStatus,
+  PeerConnectedEvent,
   SdkChatMessage,
   SendMessageOptions,
 } from './types.js';

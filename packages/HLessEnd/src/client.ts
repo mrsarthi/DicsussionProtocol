@@ -63,7 +63,11 @@ import { createTrustStack } from './wot/trust-bootstrap.js';
 import type { VoucherStore } from './wot/voucher-store.js';
 import type { VoucherHandshake } from './wot/voucher-handshake.js';
 import type { IssuanceRecord, VoucherService } from './wot/voucher-service.js';
-import type { ClientConfig, NetworkStatus } from './types.js';
+import type {
+  ClientConfig,
+  NetworkStatus,
+  PeerConnectedEvent,
+} from './types.js';
 
 /** Extra options that are test/embedding seams rather than user config. */
 export interface ClientRuntimeOptions {
@@ -114,6 +118,23 @@ export class DicsussionClient {
   public readonly trust: TrustService;
   public readonly identity: IdentityService;
   public readonly onNetworkStatus = new Emitter<{ status: [NetworkStatus] }>();
+
+  /**
+   * A peer completed the RFC 001 §5 handshake, paired or not.
+   *
+   * Fires for connections in both directions. `paired` is the field that
+   * matters: a completed handshake proves only that the far side holds
+   * the secret behind the `did:key` it asserted, which any stranger can
+   * arrange with a fresh keypair. An unpaired peer has no protocol
+   * surface — it cannot sync, and its messages are dropped — so this
+   * event exists for applications that want to surface the request
+   * rather than discard it silently.
+   *
+   * @see {@link DicsussionClient.addPeer} to accept one.
+   */
+  public readonly onPeerConnected = new Emitter<{
+    peer: [PeerConnectedEvent];
+  }>();
 
   private readonly outbox: OutboxManager;
   private readonly config: Required<Omit<ClientConfig, 'proofArtifacts'>> &
@@ -304,9 +325,22 @@ export class DicsussionClient {
 
     const connection = await transport.connect(ticket);
     this.sessions.registerConnection(connection);
+    this.announcePeer(connection.peerDid, 'outbound');
     await this.sessions.beginSync(connection);
 
     return connection;
+  }
+
+  /** Tell listeners a peer handshake completed, and whether it counts. */
+  private announcePeer(
+    peerDid: string,
+    direction: PeerConnectedEvent['direction'],
+  ): void {
+    this.onPeerConnected.emit('peer', {
+      peerDid,
+      paired: this.peers.getPeer(peerDid)?.paired === true,
+      direction,
+    });
   }
 
   // ─── Web-of-Trust (RFC 003 §5, RFC 004 §6) ────────────────────────────
@@ -594,6 +628,7 @@ export class DicsussionClient {
     this.peers.clear();
     this.online = false;
     this.onNetworkStatus.removeAllListeners();
+    this.onPeerConnected.removeAllListeners();
   }
 
   // ─── Bootstrap ────────────────────────────────────────────────────────
@@ -627,7 +662,10 @@ export class DicsussionClient {
     this.transport = await initTransport(
       this.requireIdentity(),
       this.runtime,
-      (connection) => this.sessions.registerConnection(connection),
+      (connection) => {
+        this.sessions.registerConnection(connection);
+        this.announcePeer(connection.peerDid, 'inbound');
+      },
     );
 
     this.discovery = await initDiscovery(this.requireIdentity(), this.runtime);
