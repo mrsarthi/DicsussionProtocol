@@ -64,7 +64,10 @@ export interface BridgeInbound {
  * A bidirectional byte channel owned by the host.
  *
  * Connections are named by an opaque host-assigned id; the SDK never
- * interprets it.
+ * interprets it. Ids may be recycled once a connection is finished —
+ * `onInbound` is taken as announcing a new connection, and any state
+ * held against that id is discarded — but two connections must never be
+ * live under the same id at once.
  */
 export interface BridgePipe {
   /**

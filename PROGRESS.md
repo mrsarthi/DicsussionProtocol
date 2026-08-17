@@ -475,12 +475,75 @@ run in a directory that has never seen an earlier tarball.
 
 ---
 
-## Current State (2026-08-16)
+## Task: 0.3.1 — connection liveness and the unreachable outbox
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-17
+
+Reported by the EchoIt agent from observed message loss: messages
+disappeared while the sender showed them as sent. Confirmed, and the
+cause was worse than reported.
+
+### The chain
+`PeerRegistry` read liveness as `connection !== undefined`. A transport
+tearing a connection down sets `ConnectionState.Disconnected` and wipes
+the session key, but the object stays referenced — so the peer counted as
+reachable forever. **`ConnectionState` appeared nowhere in the SDK, and
+`detachConnection()` had existed since Task 1A without a single caller.**
+
+`getNetworkStatus().connected` and the outbox gate both read that count,
+so `sendMessage` published into a dead connection and let the error
+escape. `chat-service.ts` persists *before* the online branch, so the
+message was already in local history and the channel document — that is
+where the appearance of a successful send came from — and in no retry
+queue.
+
+And it was permanent. Nothing detached, so the count never fell, so every
+later send repeated it. The outbox became unreachable for the life of the
+client.
+
+### One correction to the report
+`publish()` does not resolve successfully — every `send()` throws on a
+non-Active connection, so `sendMessage` *rejected*. Chasing that
+discrepancy is what found the persist-before-branch ordering, i.e. the
+actual source of the false success. Worth remembering that a diagnosis
+can be right about cause and wrong about mechanism, and the wrong part is
+where the remaining information is.
+
+### Fixes
+- [x] Liveness reads `ConnectionState.Active`; added `pruneDisconnected()`.
+- [x] **Sends are attempted, then queued on failure**, not gated on a
+      prediction. The decisive fix: there is always a window where the
+      transport still believes it is connected — QUIC needs a timeout, a
+      bridged host may never report at all — and no state check can catch
+      it. Replay is safe because the outbox preserves the message id and
+      channel documents key by id.
+- [x] Reconnection drains the outbox, in both directions. Only
+      `goOnline()` flushed before, so a returning peer left messages
+      queued indefinitely. Queueing is half a recovery.
+- [x] `onInbound` discards state held against a recycled connection id.
+      Found by the reconnect test: a reused id kept a reader already in
+      frame mode, so the new handshake reached the frame parser and never
+      arrived — presenting as a handshake timeout on a healthy-looking
+      connection. `BridgePipe` now states the rule rather than assuming
+      it, which is the second time an unstated assumption in that
+      contract has cost a debugging session.
+
+### Lesson
+Both this and the 0.2.0 bridge failure were invisible to a suite that
+tested units in isolation. The transport had 25 tests and none went
+through a `DicsussionClient`; the registry had liveness accessors and
+nothing asserted what happened after a connection died. Neither bug
+needed a clever test — only one that used the thing the way a consumer
+does.
+
+---
+
+## Current State (2026-08-17)
 
 | | |
 |---|---|
-| Version | **0.3.0**, both packages |
-| Tests | **528 passing, 0 failing** |
+| Version | **0.3.1**, both packages |
+| Tests | **533 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |

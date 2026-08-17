@@ -368,6 +368,13 @@ class BridgedTransport implements ITransport {
 
   /** Accepter side of the handshake. */
   private async accept(connectionId: string, _info: BridgeInbound): Promise<void> {
+    // An inbound notification announces a *new* connection, so start from
+    // a clean reader even if this id has been seen before. Hosts are free
+    // to recycle ids, and a carried-over reader would already be in frame
+    // mode — sending the new handshake to the frame parser, where it
+    // simply never arrives. The failure surfaces as a handshake timeout
+    // on a connection that looks otherwise healthy.
+    this.teardown(connectionId);
     const channel = this.channelFor(connectionId);
 
     try {

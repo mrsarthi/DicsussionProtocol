@@ -9,6 +9,7 @@
  * cross-protocol hazard, so each node carries a distinct X25519 key.
  */
 
+import { ConnectionState } from '@dicsussion/core/transport';
 import type { IConnection } from '@dicsussion/core/transport';
 
 /** A known peer and its current connection state. */
@@ -47,7 +48,7 @@ export class PeerRegistry {
   get connectedCount(): number {
     let count = 0;
     for (const peer of this.peers.values()) {
-      if (peer.connection) count++;
+      if (isLive(peer)) count++;
     }
     return count;
   }
@@ -133,7 +134,8 @@ export class PeerRegistry {
 
   /** Whether the peer currently has a live connection. */
   isConnected(did: string): boolean {
-    return this.peers.get(did)?.connection !== undefined;
+    const peer = this.peers.get(did);
+    return peer !== undefined && isLive(peer);
   }
 
   /** All known peers. */
@@ -143,7 +145,27 @@ export class PeerRegistry {
 
   /** Only peers with a live connection. */
   listConnected(): PeerRecord[] {
-    return this.list().filter((p) => p.connection !== undefined);
+    return this.list().filter(isLive);
+  }
+
+  /**
+   * Forget connections that are no longer active, keeping key material.
+   *
+   * Liveness is read from `ConnectionState` on every query, so a dead
+   * connection stops counting the moment the transport marks it closed —
+   * this only releases the object itself.
+   *
+   * @returns How many were dropped.
+   */
+  pruneDisconnected(): number {
+    let dropped = 0;
+    for (const peer of this.peers.values()) {
+      if (peer.connection && !isLive(peer)) {
+        this.detachConnection(peer.did);
+        dropped++;
+      }
+    }
+    return dropped;
   }
 
   /** Forget a peer entirely. */
@@ -155,4 +177,18 @@ export class PeerRegistry {
   clear(): void {
     this.peers.clear();
   }
+}
+
+/**
+ * Whether a peer's connection can actually carry traffic.
+ *
+ * Presence of a connection object is not liveness. When a transport
+ * tears a connection down it sets `ConnectionState.Disconnected` and
+ * wipes the session key, but the object stays referenced here — so a
+ * check for existence alone reports a peer as reachable indefinitely
+ * after it has gone. Every send would then be attempted instead of
+ * queued, and the outbox built for exactly this case never engages.
+ */
+function isLive(peer: PeerRecord): boolean {
+  return peer.connection?.state === ConnectionState.Active;
 }

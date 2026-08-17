@@ -157,9 +157,33 @@ export class ChatService {
 
     await deps.persist?.(message);
 
+    // Try, then queue on failure — rather than deciding in advance
+    // whether the peer is reachable.
+    //
+    // `isOnline()` is a prediction, and predictions about a network are
+    // wrong. A transport can hold a connection it believes is live for as
+    // long as it takes to notice otherwise: QUIC needs a timeout, and a
+    // bridged host may never report the loss at all. Publishing on the
+    // strength of that prediction and letting the error escape puts the
+    // message in local history, in no retry queue, and leaves the caller
+    // to guess — which is how a send that shows as sent arrives nowhere.
+    //
+    // Replay is safe: the outbox preserves the message id, and a channel
+    // document keys messages by id, so a peer that did receive it
+    // converges on the same entry rather than showing it twice.
+    let published = false;
+
     if (deps.isOnline()) {
-      await deps.publish(payload);
-    } else {
+      try {
+        await deps.publish(payload);
+        published = true;
+      } catch {
+        // Fall through to the outbox. The peer looked reachable and was
+        // not, which is precisely what the queue is for.
+      }
+    }
+
+    if (!published) {
       deps.outbox.enqueue({
         id,
         channelId: options.channelId,

@@ -344,8 +344,30 @@ export class DicsussionClient {
     this.sessions.registerConnection(connection);
     this.announcePeer(connection.peerDid, 'outbound');
     await this.sessions.beginSync(connection);
+    await this.drainAfterReconnect();
 
     return connection;
+  }
+
+  /**
+   * Release dead connections and send anything the outbox is holding.
+   *
+   * A queued message is only half a recovery; something has to notice
+   * the peer is back. Reconnection is that moment, and it arrives from
+   * either direction — we dial them, or they dial us — so both paths
+   * come through here.
+   *
+   * Never throws: a peer that is reachable again but fails mid-flush
+   * leaves its entries queued for the next attempt, and must not turn a
+   * successful connection into a rejected one.
+   */
+  private async drainAfterReconnect(): Promise<void> {
+    try {
+      this.peers.pruneDisconnected();
+      if (this.outbox.getPending().length > 0) await this.flushOutbox();
+    } catch {
+      // Entries stay queued; the next reconnection retries them.
+    }
   }
 
   /** Tell listeners a peer handshake completed, and whether it counts. */
@@ -682,6 +704,7 @@ export class DicsussionClient {
       (connection) => {
         this.sessions.registerConnection(connection);
         this.announcePeer(connection.peerDid, 'inbound');
+        void this.drainAfterReconnect();
       },
     );
 
