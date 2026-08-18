@@ -3,7 +3,7 @@
 - **Target Module:** `packages/core`
 - **Status:** Draft
 - **Authors:** Parth
-- **Last Updated:** 2026-07-28
+- **Last Updated:** 2026-08-18
 
 ---
 
@@ -180,7 +180,13 @@ To prevent spoofed revocations, tombstones MUST include verifiable cryptographic
 
 ## 10. Acceptance Criteria
 
-- [ ] Circom circuits compile under BN254 with sub-50ms prover time on WASM.
+- [x] Circom circuits compile under BN254. **Measured WASM prover time is
+      ~1.1s on desktop at 5,307 constraints**, not the sub-50ms this
+      document originally asserted — that figure was an estimate and was
+      wrong by more than an order of magnitude. Sub-100ms is a native
+      prover target (`rapidsnark`/`arkworks`), not a WASM one, and mobile
+      is slower again. Implementations MUST NOT put WASM proving on an
+      interactive send path without measuring on target hardware first.
 - [ ] RLN circuit enforces domain separation ($DS_{\text{nullifier}}=1$, $DS_{\text{slope}}=2$, $DS_{\text{MSG}}=3$) and private slope witness $a_1$.
 - [ ] In-circuit quota check $0 \le i < Q(T)$ rejects indices exceeding tier quota.
 - [ ] All inputs $v \ge r$ are rejected by canonical field encoding checks.

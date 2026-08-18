@@ -3,7 +3,7 @@
 - **Target Module:** `packages/core`
 - **Status:** Draft
 - **Authors:** Parth
-- **Last Updated:** 2026-07-28
+- **Last Updated:** 2026-08-18
 
 ---
 
@@ -27,7 +27,7 @@ Application state MUST NOT be stored in a single monolithic document. Instead, e
 Every document MUST conform to a registered schema structure:
 
     {
-      "$schema": "[https://schemas.dicsussion.org/v1/chat-room.json](https://schemas.dicsussion.org/v1/chat-room.json)",
+      "$schema": "https://schemas.dicsussion.org/v1/chat-room.json",
       "doc_id": "c7a8f902-3b1d-4e5f-9a1b-2c3d4e5f6a7b",
       "meta": {
         "title": "General Chat",

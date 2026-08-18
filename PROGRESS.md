@@ -538,7 +538,85 @@ does.
 
 ---
 
-## Current State (2026-08-17)
+## Task: RFC reconciliation — specs vs shipped code
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-18
+
+The RFCs were last touched 2026-07-28/30, before three releases. Audited
+all four against source; two had diverged materially, one had a wrong
+number, one was sound.
+
+### RFC 001 — Transport & Discovery
+- [x] **`PeerTicket` was missing two shipped fields**, both load-bearing.
+      `transport_key` is the Iroh `EndpointId`, derived by HKDF from the
+      secret half and therefore not recomputable by anyone else — a
+      ticket without it names an undialable peer. `encryption_key` is
+      what makes a ticket a pairing artifact rather than an address.
+- [x] Documented that pairing is **mutual**, that dialling registers the
+      key on the dialling side only, and that a completed handshake is
+      not pairing. This is the trap that cost this project two separate
+      debugging sessions and was specified nowhere.
+- [x] Added §4.3 Transport Backends. The overview asserted all traffic
+      MUST cross peer-to-peer QUIC, which three shipped transports
+      contradict. Direct QUIC is now stated as the reference transport,
+      with the bridged and relayed backends and what each gives up.
+- [x] Wrote down the `BridgePipe` contract as normative: ordered bytes
+      with no boundary guarantee, host-reported addresses, connection-id
+      recycling, and host-owned confidentiality. Two of those four were
+      unstated assumptions that each cost a debugging session.
+- [x] Stated that a relayed transport is **not** zero-knowledge —
+      everything but chat bodies crosses it readable.
+
+### RFC 003 — Security Envelope
+- [x] "sub-50ms prover time on WASM" was wrong by more than an order of
+      magnitude; measured is ~1.1s desktop at 5,307 constraints. Sub-100ms
+      is a *native* prover target. Corrected, with a warning against
+      putting WASM proving on an interactive path unmeasured.
+
+### RFC 004 — Headless Backend
+- [x] **Removed Electron.** The document specified Electron IPC process
+      isolation throughout — overview, topology diagram, bootstrap
+      comment, acceptance criteria — and it was never implemented. The
+      engine is host-agnostic; the diagram now shows the storage and
+      transport seams that make it so.
+- [x] §7.1 rewritten: `ClientConfig` gained `storageKey`, `zkProofs` and
+      `proofArtifacts`; `init` takes the runtime options it has always
+      taken; `ClientRuntimeOptions`, `TransportFactory` and
+      `onPeerConnected` documented for the first time.
+- [x] §7.3 no longer files identity recovery under "Missing Service
+      APIs" — it is implemented and tested, and the RSA re-pair caveat is
+      recorded.
+- [x] §7.4 `OutboxEntry` corrected (`proof` was never a field;
+      `proofEpoch` and `retryCount` are), and **send semantics made
+      normative**: attempt then queue, never predict reachability;
+      `sendMessage` must not reject because a peer has gone; replay must
+      be idempotent by message id; liveness from connection *state*, not
+      the presence of an object; drain on reconnect in both directions.
+      That clause is the 0.3.1 bug written down so it cannot recur.
+- [x] §4.1 now requires `storageKey` whenever the store is a real file.
+
+### RFC 002 — Data Sync
+Checked and accurate; the document schema still matches the
+implementation. Fixed one malformed autolink that rendered literally
+inside a JSON example.
+
+### Verification
+Twelve claims the updated RFCs make were checked against source rather
+than from memory — ticket fields, the factory, the storage seam, the
+event, config fields, outbox fields, state-based liveness, the pipe
+contract. All present.
+
+### Note
+Every divergence pointed the same way: the specs described an intended
+design, and the code had moved past it without the documents following.
+The Electron model had been dead for weeks. Worth rechecking the specs on
+each release rather than each quarter, since a spec that is wrong is
+worse than one that is merely thin — it is the thing a new implementer
+would trust.
+
+---
+
+## Current State (2026-08-18)
 
 | | |
 |---|---|
@@ -569,6 +647,8 @@ finished and published.
 
 1. Relay transport encryption — the only open item that is a security hole
    rather than an unbuilt feature, and the smallest of the serious ones.
+   Now specified: RFC 001 §4.3 states what a relayed transport exposes,
+   which is the requirement this would satisfy.
 2. A relay server. The SDK speaks the protocol and no reference
    implementation exists, which is the widest gap between the architecture
    documents and what is actually running.

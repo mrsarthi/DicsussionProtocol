@@ -3,13 +3,15 @@
 - **Target Module:** `@dicsussion/sdk` (`packages/HLessEnd`)
 - **Status:** Draft
 - **Author:** Parth
-- **Last Updated:** 2026-07-30
+- **Last Updated:** 2026-08-18
 
 ---
 
 ## 1. Overview
 
-This specification defines the Headless Backend Engine and Client SDK (`@dicsussion/sdk`) that acts as the primary orchestrator facade for the Dicsussion application. It encapsulates local persistence in SQLite or IndexedDB, Electron IPC process isolation, local Web-of-Trust (WoT) score calculations, and a persistent Web Worker pool for the ZekPoc (Zero Knowledge Proof of Chat) cryptographic protocol.
+This specification defines the Headless Backend Engine and Client SDK (`@dicsussion/sdk`) that acts as the primary orchestrator facade for the Dicsussion application. It encapsulates local persistence in SQLite or IndexedDB, local Web-of-Trust (WoT) score calculations, and a worker pool for the ZekPoc (Zero Knowledge Proof of Chat) cryptographic protocol.
+
+The SDK is **host-agnostic**. It runs in Node, in a webview paired with a native layer, and in a browser, and it MUST NOT assume any particular process model. Earlier revisions of this document specified Electron IPC; that was never implemented and the requirement is withdrawn.
 
 Application frontends import this SDK as a single library to access chat, group, identity, and zero-knowledge reputation features without directly managing low-level graph sockets or process executions.
 
@@ -24,31 +26,37 @@ Application frontends import this SDK as a single library to access chat, group,
 
 ## 3. Runtime Architecture & Process Isolation
 
-To guarantee 60 FPS UI performance on desktop environments, the SDK completely isolates heavy cryptographic calculations and local persistence routines from the main rendering process using Electron IPC channels.
+To keep a UI responsive, the SDK MUST keep heavy cryptographic work off whatever thread renders it. How that separation is achieved is the host's concern — worker threads in Node, Web Workers in a browser, a native layer under a webview — and the SDK MUST work under all of them without naming one.
 
 ### 3.1 Multi-Process Execution Topology
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
-│                      MAIN THREAD (Renderer / UI)                       │
+│                      APPLICATION / UI                                  │
 │           Dicsussion Frontend  <--->  DicsussionClient Facade          │
 └───────────────────────────────────┬────────────────────────────────────┘
-                                    │ Electron IPC Bridge
+                                    │ in-process calls
 ┌───────────────────────────────────▼────────────────────────────────────┐
-│                    NODE.JS BACKGROUND PROCESS (Core)                   │
-│  • P2P Transport Orchestration                                         │
-│  • Local Web-of-Trust Score Calculator                                 │
-│  • Persistent Web Worker Pool for Proof Generation                    │
-└───────────────┬────────────────────────────────────────┬───────────────┘
-                │                                        │
-                ▼                                        ▼
-┌───────────────────────────────┐        ┌───────────────────────────────┐
-│  SQLITE / INDEXEDDB STORE     │        │ WEB WORKER POOL (BACKGROUND) │
-│ • Local Node Persistence      │        │ • Persistent worker pool     │
-│ • Automerge State Sync        │        │ • Timeout-safe proof gen     │
-│ • Encrypted Key Vault         │        │ • Crash recovery / health    │
-└───────────────────────────────┘        └───────────────────────────────┘
+│                    HEADLESS ENGINE (@dicsussion/sdk)                   │
+│  • Session management and frame routing                                │
+│  • Local Web-of-Trust score calculator                                 │
+│  • Outbox, CRDT sync, identity lifecycle                               │
+└───────┬────────────────────────────┬───────────────────────┬───────────┘
+        │  storage seam              │  transport seam       │
+        ▼                            ▼                       ▼
+┌──────────────────┐   ┌──────────────────────────┐  ┌──────────────────┐
+│ IStorageDriver   │   │ ITransport               │  │ WORKER POOL      │
+│ • SQLite (Node)  │   │ • Direct QUIC (Iroh)     │  │ • Proof gen      │
+│ • IndexedDB      │   │ • Bridged host pipe      │  │ • Timeout-safe   │
+│   (browser /     │   │ • Relayed WebSocket      │  │ • Crash recovery │
+│    webview)      │   │ • In-process (tests)     │  │                  │
+└──────────────────┘   └──────────────────────────┘  └──────────────────┘
 ```
+
+**The two seams are what make the engine host-agnostic**, and both are
+required. `better-sqlite3` is a native module that cannot load in a
+webview, and a webview cannot open a QUIC socket — so a host that fits
+neither default MUST be able to substitute both. See §7.1.
 
 ---
 
@@ -61,6 +69,15 @@ The SDK utilizes **SQLite** for desktop contexts and **IndexedDB** for browser c
 The local store is partitioned into logical collections:
 
 1. **`identity`**: Holds local keypairs (Ed25519, X25519), ZekPoc identity secrets, and encrypted mnemonic backups.
+
+   **Whenever the store is a real file rather than memory, an
+   implementation MUST require a `storageKey` and MUST refuse to write
+   secret key material without one.** A local-first design puts the
+   entire identity on disk, so an unprotected store hands over the
+   `did:key`, the X25519 key, and the RLN identity secret $a_0$ together.
+   Where the key comes from is the application's concern — an OS keychain,
+   a user passphrase, a hardware token — but its absence MUST be surfaced
+   loudly rather than defaulted through.
 2. **`wot_peers`**: Maps peer `did:key` identifiers to interaction counters, verified chat histories, and computed subjective trust scores.
 3. **`voucher_redeemed`**: Tracks blind endorsement voucher tokens (`+5 POC` gifts) and redemption nullifiers to prevent double-spending.
 4. **`channel_meta`**: Stores metadata, peer lists, and access control thresholds for active chat channels.
@@ -147,7 +164,41 @@ export interface ClientConfig {
   proofTimeoutMs?: number;
   autoReconnect?: boolean;
   maxOutboxSize?: number;
+  /** Encrypts secret key material at rest. REQUIRED when storagePath
+   *  names a real file — see §4.1. */
+  storageKey?: string;
+  /** Whether anonymous sends carry ZK proofs. Defaults to 'off'. */
+  zkProofs?: 'off' | 'on';
+  proofArtifacts?: {
+    wasmPath: string;
+    zkeyPath: string;
+    verificationKeyPath: string;
+  };
 }
+
+/**
+ * Host substitutions. Separate from ClientConfig because these are
+ * embedding seams, not user-facing settings.
+ */
+export interface ClientRuntimeOptions {
+  transport?: 'local' | 'iroh' | 'websocket' | ITransport | TransportFactory;
+  storage?: IStorageDriver;
+  relayUrl?: string;
+  bindAddr?: string;
+  enableDiscovery?: boolean;
+}
+
+/**
+ * Builds a transport once the identity exists.
+ *
+ * A transport authenticates as the node, so it needs the Ed25519
+ * keypair — but that is derived during init() from a seed the caller
+ * never holds. A ready-made instance is therefore impossible to supply
+ * for any transport that authenticates, which is all of them.
+ */
+export type TransportFactory = (
+  identity: Ed25519KeyPair,
+) => ITransport | Promise<ITransport>;
 
 export interface NetworkStatus {
   connected: boolean;
@@ -156,35 +207,46 @@ export interface NetworkStatus {
   lastSyncTimestamp: number;
 }
 
+/** A peer completed the §5 handshake, paired or not. */
+export interface PeerConnectedEvent {
+  peerDid: string;
+  paired: boolean;
+  direction: 'outbound' | 'inbound';
+}
+
 export class DicsussionClient {
   public readonly chat: ChatService;
   public readonly groups: GroupService;
   public readonly trust: TrustService;
   public readonly identity: IdentityService;
-  public readonly onNetworkStatus: EventEmitter<NetworkStatus>;
+  public readonly onNetworkStatus: Emitter<NetworkStatus>;
+  public readonly onPeerConnected: Emitter<PeerConnectedEvent>;
 
-  private constructor(config: ClientConfig) {
-    this.chat = new ChatService();
-    this.groups = new GroupService();
-    this.trust = new TrustService();
-    this.identity = new IdentityService();
-  }
+  public static async init(
+    config?: ClientConfig,
+    runtime?: ClientRuntimeOptions,
+  ): Promise<DicsussionClient>;
 
-  public static async init(config: ClientConfig = {}): Promise<DicsussionClient> {
-    const client = new DicsussionClient(config);
-    await client.bootstrapInternalEngine();
-    return client;
-  }
-
-  async disconnect(): Promise<void> {
-    // Unsubscribe listeners, flush outbox, disconnect Iroh peers, reset worker pool
-  }
-
-  private async bootstrapInternalEngine(): Promise<void> {
-    // Initializes Electron IPC bridge & connects to local SQLite/IndexedDB persistence
-  }
+  /** Register a peer's X25519 key, learned out of band. */
+  addPeer(did: string, encryptionKey: Uint8Array): void;
+  connect(ticket: PeerTicket): Promise<IConnection>;
+  getTicket(): PeerTicket;
+  getNetworkStatus(): NetworkStatus;
+  disconnect(): Promise<void>;
 }
 ```
+
+**Pairing is not authorization derived from the wire.** `addPeer` is the
+only thing that authorizes traffic. `connect` registers the key carried
+in a ticket, but on the dialling side alone — the accepting side MUST
+pair separately, or it will drop everything the dialer sends (RFC 001
+§3.3). `onPeerConnected` exists so an application can surface an unpaired
+peer's handshake rather than discard it silently; `paired` is the field
+that decides what to do.
+
+**`onPeerConnected` is not a delivery signal.** It reports that a
+handshake completed, which says only that the far side holds the secret
+behind the `did:key` it asserted.
 
 ### 7.2 Core Service API Signatures
 
@@ -251,8 +313,14 @@ export class TrustService {
 }
 ```
 
-### 7.3 Missing Service APIs
+### 7.3 Group & Identity Service APIs
 The SDK surface MUST expose concrete service definitions for group management and identity lifecycle operations so the client can create, recover, and rotate identities without reaching into undocumented internals.
+
+Identity recovery is **implemented**, not aspirational: `exportMnemonic`
+and `recoverFromMnemonic` restore the same `did:key` and the same
+`cm_identity`, so channel membership survives a replaced device. The RSA
+blind-signing key is *not* derived from the seed and is regenerated on
+recovery, so peers MUST re-pair before endorsements can be issued again.
 
 ```typescript
 export class GroupService {
@@ -294,11 +362,61 @@ export interface OutboxEntry {
   id: string;
   channelId: string;
   content: string;
-  proof: ZekPocProofOutput;
   createdAt: number;
   status: 'pending' | 'sending' | 'failed' | 'sent';
+  /** Epoch the message was minted in; refreshed on each flush attempt
+   *  so a stale proof is not replayed. */
+  proofEpoch: number;
+  retryCount: number;
 }
 ```
+
+#### Send semantics
+
+**Implementations MUST attempt the send and queue on failure. They MUST
+NOT decide in advance whether a peer is reachable.**
+
+Reachability is a prediction, and predictions about a network are wrong.
+A transport can hold a connection it believes is live for as long as it
+takes to notice otherwise — QUIC needs a timeout, and a bridged host may
+never report the loss at all. A client that publishes on the strength of
+that belief, and lets the resulting error escape, leaves the message in
+local history, in no retry queue, and the caller with no way to tell.
+That is a silent loss, and it is the failure this clause exists to
+prevent.
+
+Consequently:
+
+1. A send that fails for any reason MUST enter the outbox.
+2. `sendMessage` MUST NOT reject merely because a peer has gone. Callers
+   determine delivery state from the outbox and `getNetworkStatus()`, not
+   from an exception.
+3. Replay MUST be idempotent. The outbox preserves the message `id`, and
+   channel documents key messages by `id` (RFC 002 §3.1), so a peer that
+   did receive a message converges on the same entry rather than showing
+   it twice. This is what makes queue-on-failure safe when a fan-out
+   partially succeeded.
+
+#### Liveness
+
+A peer registry MUST determine liveness from connection **state**, never
+from the presence of a connection object. A transport that tears a
+connection down marks it disconnected and wipes its session key, but the
+object may remain referenced; treating that as "connected" reports the
+peer as reachable indefinitely, keeps the client believing it is online,
+and renders the outbox unreachable for the life of the process.
+
+Connections that are no longer active MUST be released, and pairing MUST
+survive that release — it is a decision the application made, not a
+property of the transport.
+
+#### Reconnection
+
+Queueing is half a recovery; something has to notice the peer is back.
+Implementations MUST drain the outbox when a connection is established,
+in **both** directions — whether this node dialled the peer or the peer
+dialled it. A flush that fails MUST leave entries queued for the next
+attempt and MUST NOT turn a successful connection into a failed one.
 
 ### 7.5 Voucher Record Schema
 The local voucher store MUST persist a concrete voucher record schema so redeemed vouchers can be deduplicated and garbage-collected safely.
@@ -318,7 +436,8 @@ export interface VoucherRecord {
 
 ## 8. Acceptance Criteria
 
-- [ ] `@dicsussion/sdk` initializes cleanly over Electron IPC without blocking the UI renderer thread.
+- [x] `@dicsussion/sdk` initializes cleanly in Node, in a webview over a bridged transport, and in a browser, without blocking the thread that renders.
+- [x] A message sent to a peer that has gone is queued rather than lost, and is delivered when that peer reconnects.
 - [ ] SQLite/IndexedDB persistence stores, retrieves, and syncs Automerge deltas locally and across P2P peers.
 - [ ] Persistent Web Worker pools generate and verify ZekPoc proofs without crashing the background process.
 - [ ] Base trust score for all unverified contacts accurately defaults to $S_{\text{base}} = 0$.

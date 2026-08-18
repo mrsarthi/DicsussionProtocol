@@ -3,12 +3,14 @@
 - **Target Module:** `packages/core`
 - **Status:** Draft
 - **Authors:** Parth
-- **Last Updated:** 2026-07-28
+- **Last Updated:** 2026-08-18
 
 ---
 
 ## 1. Overview
-This specification defines the transport, peer discovery, and networking foundation for the protocol. All communication between nodes MUST occur over encrypted, peer-to-peer QUIC streams using key-based addressing (`did:key`) rather than IP addresses. Nodes MUST automatically discover local network peers via mDNS and punch through complex NAT boundaries globally using Iroh. If direct STUN hole-punching fails, nodes MUST fall back to Iroh DERP relays as honest-but-curious fallback endpoints over direct QUIC streams so the mesh remains available even if one relay is unavailable or sleeping.
+This specification defines the transport, peer discovery, and networking foundation for the protocol. All communication between nodes MUST use key-based addressing (`did:key`) rather than IP addresses, and MUST establish a session through the §5 handshake regardless of which transport carries the bytes.
+
+**Direct peer-to-peer QUIC is the reference transport and the only one that meets this document's guarantees in full.** It is REQUIRED wherever the host can open a UDP socket. Two further transports exist because some hosts cannot, and §4.3 states plainly what each gives up. Nodes MUST automatically discover local network peers via mDNS and punch through complex NAT boundaries globally using Iroh. If direct STUN hole-punching fails, nodes MUST fall back to Iroh DERP relays as honest-but-curious fallback endpoints over direct QUIC streams so the mesh remains available even if one relay is unavailable or sleeping.
 
 ---
 
@@ -34,10 +36,38 @@ For out-of-band peer pairing, nodes MUST be able to serialize their endpoint inf
 
     pub struct PeerTicket {
         pub did_key: String,               // W3C did:key string
-        pub node_id: [u8; 32],             // Public key bytes
+        pub node_id: [u8; 32],             // Ed25519 identity public key
         pub direct_addresses: Vec<String>, // e.g., ["192.168.1.104:4242", "10.0.0.12:4242"]
         pub derp_relay: Option<String>,    // Iroh DERP relay endpoint for fallback transport
+        pub transport_key: Option<[u8; 32]>,  // Transport public key (Iroh EndpointId)
+        pub encryption_key: Option<[u8; 32]>, // X25519 public key for E2EE key agreement
     }
+
+**`transport_key`** is the peer's Iroh `EndpointId`, derived from the
+identity key by domain-separated HKDF. It MUST be published in the ticket
+because the derivation requires the secret half and therefore cannot be
+recomputed from `did_key` by anyone else. A ticket without it names a peer
+that cannot be dialled.
+
+**`encryption_key`** is what makes a ticket a *pairing* artifact rather
+than an address. Pairing under §3.3 is mutual: a node that has not
+recorded a peer's X25519 key cannot decrypt what that peer sends and MUST
+drop it. Dialling a ticket registers the key on the **dialling** side
+only, so the accepting side MUST obtain the dialer's ticket by the same
+out-of-band route. Implementations MUST NOT treat a completed handshake
+as pairing — `HandshakeInit.did_key` is self-asserted, so a stranger with
+a fresh keypair is indistinguishable from a known contact.
+
+Both fields are optional in the wire encoding so that tickets from
+transports which have no such key (for example an in-process transport
+used in tests) remain representable.
+
+**Publication timing.** Address discovery is not instantaneous: a public
+address arrives from STUN some time after the socket binds, and a relay
+is assigned later still. Implementations MUST NOT publish a ticket before
+the endpoint has settled, or it will carry only link-local and LAN
+addresses — dialable on the same network and nowhere else, which presents
+as NAT traversal failure rather than as a malformed ticket.
 
 ### 3.4 Wire Frame Header Structure & Parser Bounds
 Every raw frame sent across a transport sub-stream MUST be prefixed with a fixed 12-byte binary header:
@@ -107,6 +137,65 @@ Nodes MUST execute discovery and connection establishment across two distinct ti
    - DERP relay transport operates over direct QUIC streams and acts as an honest-but-curious fallback endpoint.
    - Relays are **zero-knowledge**: they only forward end-to-end encrypted packet streams and CANNOT decrypt or view payload contents.
    - If the primary DERP relay is unavailable, nodes MUST retry using the backup relay without requiring a full application restart.
+
+---
+
+### 4.3 Transport Backends
+
+An implementation MUST expose transports behind a single interface, so
+that everything above the byte layer — the §5 handshake, session-key
+derivation, §3.4 framing, and §6 stream priority — is written once and
+shared. Three backends are defined.
+
+| Backend | When it applies | What it gives up |
+|---|---|---|
+| **Direct QUIC (Iroh)** | Any host that can open a UDP socket | Nothing. The reference transport. |
+| **Bridged byte pipe** | Hosts that cannot open sockets themselves but own one natively — a webview paired with a native layer | §6 priority weakens to send-queue ordering (see below) |
+| **Relayed WebSocket** | Browsers, which can neither open a QUIC socket nor accept an inbound connection | Every byte crosses a third party; see the confidentiality note below |
+
+#### Bridged transport contract
+
+Where the host owns the socket, it supplies an ordered byte channel and
+the protocol supplies everything else. The contract is deliberately
+minimal, and implementations MUST observe all four points:
+
+1. **Ordered bytes, and nothing more.** A host MAY split one write across
+   several delivery callbacks, or coalesce several writes into one. Both
+   are correct. Implementations MUST NOT require the host to preserve
+   message boundaries — the protocol length-prefixes its own handshake
+   control messages, and a host that also frames them will break the
+   handshake.
+2. **Reachability is reported by the host.** The transport key is derived
+   from the identity and so is known only to the node; the addresses
+   behind it are known only to the host. A dialable ticket requires both.
+3. **Connection identifiers MAY be recycled once finished, but two live
+   connections MUST NEVER share one.** An inbound notification is taken as
+   announcing a new connection, and any state held against that identifier
+   is discarded.
+4. **Confidentiality to the peer is the host's responsibility.** This
+   transport frames and forwards; it does not add encryption beneath the
+   protocol. Bridging a QUIC or TLS channel satisfies §1. Bridging a
+   plaintext socket does not.
+
+Because one pipe carries all six §6 sub-streams, priority degrades from
+QUIC stream scheduling to send-queue ordering: an urgent frame jumps the
+queue, but a frame already handed to the host completes first. Bounded by
+the frame ceiling in §3.4 rather than a stall.
+
+#### Relayed transport confidentiality
+
+A relayed transport carries the §5 handshake end to end, so the relay
+never holds a signing key and cannot impersonate a peer. It also cannot
+read chat bodies, which are sealed under the session key before reaching
+it.
+
+It CAN read everything else. Unless an implementation encrypts beneath
+this layer, CRDT sync on `0x01`, revocation gossip on `0x03`, voucher
+handshakes on `0x04`, and RLN traffic on `0x05`/`0x06` cross the relay in
+the clear — from which an operator can reconstruct the membership graph
+and read history replicated through sync. Implementations MUST disclose
+this to users rather than describing such a relay as zero-knowledge, and
+MUST prefer a direct or bridged transport wherever one is available.
 
 ---
 
