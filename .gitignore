@@ -123,3 +123,6 @@ Thumbs.db
 
 # Throwaway ceremony practice — never part of the real chain
 ceremony-rehearsal/
+
+# macco analysis transcripts — local working output, not a repo record
+.macco/
