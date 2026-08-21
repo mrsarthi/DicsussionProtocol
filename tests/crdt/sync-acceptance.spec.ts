@@ -170,12 +170,25 @@ test.describe('CRDT — RFC 002 §7 Acceptance Criteria', () => {
     // Warm up, so the measurement is not dominated by first-call JIT.
     computeManagerStateRoot(documents);
 
-    const started = performance.now();
+    // Best of several batches, not the mean of one.
+    //
+    // This runs alongside 500-odd other tests across parallel workers, so
+    // any single batch can be preempted by the scheduler — and a mean is
+    // dominated by that pause rather than by the work. The fastest batch
+    // is the least-contended observation, which is the one that actually
+    // says something about the algorithm. Averaging instead made this the
+    // only test in the suite that failed under load and passed alone.
     const iterations = 20;
-    for (let i = 0; i < iterations; i++) {
-      computeManagerStateRoot(documents);
+    const batches = 5;
+    let perCall = Infinity;
+
+    for (let batch = 0; batch < batches; batch++) {
+      const started = performance.now();
+      for (let i = 0; i < iterations; i++) {
+        computeManagerStateRoot(documents);
+      }
+      perCall = Math.min(perCall, (performance.now() - started) / iterations);
     }
-    const perCall = (performance.now() - started) / iterations;
 
     // RFC 002 §7 specifies < 2 ms on mobile hardware. This is a desktop,
     // so the bar is set generously — the point is to catch an algorithmic
