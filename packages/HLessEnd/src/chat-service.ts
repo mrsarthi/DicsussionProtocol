@@ -35,7 +35,13 @@ export interface ChatServiceDeps {
   /** Whether the node currently considers itself online. */
   readonly isOnline: () => boolean;
   /** Encrypt and transmit a message to every connected peer. */
-  readonly publish: (payload: MessagePayload) => Promise<void>;
+  /**
+   * Encrypt and transmit to every paired, connected peer.
+   *
+   * @returns How many peers it reached. Zero is a failure to deliver,
+   *   not a success — see `sendMessage`.
+   */
+  readonly publish: (payload: MessagePayload) => Promise<number>;
   /** Persist a message to the local message stream. */
   readonly persist?: (message: SdkChatMessage) => Promise<void>;
   /**
@@ -73,6 +79,14 @@ export class ChatService {
 
   private readonly emitter = new Emitter<Record<string, [SdkChatMessage]>>();
   private readonly listenerCounts = new Map<string, number>();
+
+  /**
+   * Message ids already emitted, per channel.
+   *
+   * Absent means the channel has never been observed, which seeds a
+   * baseline rather than replaying history — see `emitSynced`.
+   */
+  private readonly emitted = new Map<string, Set<string>>();
   private deps: ChatServiceDeps | null = null;
 
   constructor() {
@@ -175,8 +189,11 @@ export class ChatService {
 
     if (deps.isOnline()) {
       try {
-        await deps.publish(payload);
-        published = true;
+        // Zero recipients is not delivery. An empty fan-out resolves
+        // exactly like a successful one, so without this a node whose
+        // only live connection is an unpaired stranger marks the message
+        // sent and drops it.
+        published = (await deps.publish(payload)) > 0;
       } catch {
         // Fall through to the outbox. The peer looked reachable and was
         // not, which is precisely what the queue is for.
@@ -322,10 +339,67 @@ export class ChatService {
   }
 
   /**
+   * Emit messages a CRDT sync just added to a channel.
+   *
+   * Messages reach a node two ways. An E2EE envelope on stream `0x02`
+   * runs through `ingestRemote`, which emits. A message that arrives by
+   * document sync on `0x01` is merged straight into the channel document
+   * and, until this existed, notified nobody — so it appeared in
+   * `getHistory()` and never in `onMessage`. To an application appending
+   * on the event that is indistinguishable from the message being lost,
+   * which is exactly how it was reported.
+   *
+   * De-duplication is by message id against what this channel has
+   * already emitted. Both duplicate paths collapse into it: the same
+   * message arriving over `0x02` and again by sync, and the same message
+   * re-applied while syncing with a third peer. Channel documents key
+   * messages by id (RFC 002 §3.1), so a re-apply is a no-op in the
+   * document too.
+   *
+   * @param channelId Channel whose document advanced.
+   * @returns The messages emitted by this call.
+   */
+  async emitSynced(channelId: string): Promise<SdkChatMessage[]> {
+    const deps = this.deps;
+    if (!deps) return [];
+
+    const seen = this.emitted.get(channelId);
+
+    // First sight of this channel seeds the baseline instead of
+    // emitting. Otherwise the first sync after a restart replays the
+    // entire history as though it had just arrived.
+    if (!seen) {
+      const known = new Set(
+        Object.keys(deps.documents.getDocument(channelId)?.messages ?? {}),
+      );
+      this.emitted.set(channelId, known);
+      return [];
+    }
+
+    const fresh: SdkChatMessage[] = [];
+    for (const message of await this.getHistory(channelId)) {
+      if (seen.has(message.id)) continue;
+      seen.add(message.id);
+      fresh.push(message);
+    }
+
+    for (const message of fresh) this._emitMessage(channelId, message);
+    return fresh;
+  }
+
+  /** Record an id as emitted, so sync does not emit it a second time. */
+  private markEmitted(channelId: string, id: string): void {
+    const seen = this.emitted.get(channelId);
+    if (seen) seen.add(id);
+    else this.emitted.set(channelId, new Set([id]));
+  }
+
+  /**
    * Emit an incoming message to channel listeners.
    * Called internally by the client when frames arrive.
    */
   _emitMessage(channelId: string, message: SdkChatMessage): void {
+    this.markEmitted(channelId, message.id);
     const eventName = `message:${channelId}`;
     this.emitter.emit(eventName, message);
   }

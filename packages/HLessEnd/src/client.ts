@@ -538,7 +538,11 @@ export class DicsussionClient {
   /** Current network status snapshot. */
   getNetworkStatus(): NetworkStatus {
     return {
-      connected: this.online && this.peers.connectedCount > 0,
+      // `connected` answers "can I deliver", so it counts paired peers
+      // only — the same set publish() sends to. `peerCount` counts every
+      // live connection including unpaired ones, which is what an app
+      // needs to surface a stranger's request. They differ on purpose.
+      connected: this.online && this.peers.listPairedConnected().length > 0,
       peerCount: this.peers.connectedCount,
       relayActive: false,
       lastSyncTimestamp: this.sessions.lastSync,
@@ -712,6 +716,7 @@ export class DicsussionClient {
 
     this.wireProofService();
     this.wireChatService();
+    this.wireSyncedMessages();
     await this.wireTrustService();
     this.wireGroupService();
 
@@ -743,12 +748,34 @@ export class DicsussionClient {
     });
   }
 
+  /**
+   * Surface messages that arrived by document sync rather than as an
+   * envelope on `0x02`.
+   *
+   * `CrdtSyncEngine` reports which document a peer advanced; the chat
+   * service works out which messages inside it are new. Without this the
+   * `0x01` path merges silently and an application appending on
+   * `onMessage` never learns, which is indistinguishable from loss.
+   */
+  private wireSyncedMessages(): void {
+    this.syncEngine.onDocumentUpdate((update) => {
+      // The handler is synchronous by contract, so this cannot be
+      // awaited; a failure to emit must not disturb the sync loop.
+      void this.chat.emitSynced(update.docId).catch(() => {});
+    });
+  }
+
   private wireChatService(): void {
     this.chat.attach({
       documents: this.documents,
       outbox: this.outbox,
       getLocalDid: () => this.requireIdentity().did,
-      isOnline: () => this.online && this.peers.connectedCount > 0,
+      // Paired *and* connected. `connectedCount` includes strangers who
+      // merely completed a handshake, and publish() sends to paired
+      // peers only — so counting them reports reachability the send path
+      // does not have, and a stranger's connection alone would suppress
+      // the outbox.
+      isOnline: () => this.online && this.peers.listPairedConnected().length > 0,
       publish: (payload) => this.sessions.publish(payload),
       persist: async (message) => {
         await this.messageStore?.save(message);

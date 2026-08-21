@@ -129,7 +129,7 @@ export class SessionManager {
    * Each peer gets its own envelope: encryption is per-recipient via
    * ephemeral X25519 ECDH, so there is no shared group key in Phase 1A.
    */
-  async publish(payload: MessagePayload): Promise<void> {
+  async publish(payload: MessagePayload): Promise<number> {
     const epoch = currentEpoch();
     const sends: Array<Promise<void>> = [];
 
@@ -150,6 +150,13 @@ export class SessionManager {
     }
 
     await Promise.all(sends);
+
+    // Reporting the count is what lets the caller tell "delivered to
+    // nobody" from "delivered". Fanning out to an empty set resolves
+    // exactly like a successful send, so a node whose only connection is
+    // an unpaired stranger would otherwise mark the message sent and
+    // never queue it.
+    return sends.length;
   }
 
   /** Route an inbound frame by sub-stream. */
