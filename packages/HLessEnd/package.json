@@ -1,6 +1,6 @@
 {
   "name": "@dicsussion/sdk",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Dicsussion headless backend and client SDK â€” local-first, end-to-end encrypted, metadata-private messaging (RFC 004)",
   "type": "module",
   "license": "Apache-2.0",
@@ -24,7 +24,7 @@
     "build": "tsc -b tsconfig.build.json"
   },
   "dependencies": {
-    "@dicsussion/core": "0.3.1",
+    "@dicsussion/core": "0.3.2",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.0.1",
     "@scure/bip39": "^2.2.0",

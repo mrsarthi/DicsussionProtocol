@@ -16,7 +16,7 @@
 ---
 
 > [!IMPORTANT]
-> **v0.3.1 — read this before depending on it.**
+> **v0.3.2 — read this before depending on it.**
 >
 > The Groth16 proving key is the output of a **completed six-party trusted
 > setup**, closed with a Bitcoin block hash committed to publicly three days

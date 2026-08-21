@@ -616,12 +616,71 @@ would trust.
 
 ---
 
-## Current State (2026-08-18)
+## Task: 0.3.2 — sync-delivered messages, and asking the right question
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-21
+
+Reported by the EchoIt agent as message loss with a false sent
+indication. The cause in that report was exactly right; the consequence
+was not, and the difference decided the fix.
+
+### The reported bug, reproduced
+A stranger dialling a node flipped `connected` to true, after which a
+message meant for an offline contact was published to zero peers,
+resolved as success, and was never queued.
+
+### What the report got wrong, and why it mattered
+"That message is lost — it won't even retry later." It was not. On
+reconnect the peer's history held every supposedly-lost message: CRDT
+sync converges the channel document, exactly as local-first intends.
+
+Chasing that discrepancy found the real defect. Messages arrive two ways
+— an envelope on `0x02` through `ingestRemote`, which emits, and a merge
+by document sync on `0x01`, which announced nothing. `_emitMessage` had
+exactly one caller. A synced message therefore appeared in `getHistory()`
+and never in `onMessage`, which for a UI appending on the event is
+indistinguishable from loss. That is what their users saw.
+
+**A diagnosis can be right about cause and wrong about consequence, and
+the wrong part is where the remaining information is.** Second time this
+pattern has paid out — 0.3.1 was the same shape.
+
+### Fixes
+- [x] Subscribe to `CrdtSyncEngine.onDocumentUpdate` and emit what a sync
+      added. The hook existed, was tested, and had no production
+      subscriber. De-duplication by message id covers both duplicate
+      paths; first sight of a channel seeds a baseline so the first sync
+      after a restart does not replay history as new.
+- [x] `publish()` returns how many peers it reached. Returning `void`
+      meant an empty fan-out resolved identically to a successful one, so
+      0.3.1's queue-on-failure never fired — nothing had failed.
+- [x] `isOnline()` and `getNetworkStatus().connected` read
+      `listPairedConnected()`. They were reading `connectedCount`, which
+      includes unpaired peers, while `publish()` sends only to paired
+      ones. `peerCount` still counts everything, since an application
+      needs that to surface a stranger's request.
+
+### Why nothing caught it
+Every suite here used exactly one contact, where "is anyone connected"
+and "can I reach my contact" are the same question. They diverge at two
+peers, or at one stranger. The new suite uses three participants — the
+smallest number that separates them — and that is the shape worth
+reaching for first now.
+
+### Tooling note
+Used `macco` on the design question of where the emit belongs. It found
+`onDocumentUpdate` and flagged the seeding trap: without a baseline on
+first observation, the first sync after a restart replays the whole
+history as new. That is a bug I would have shipped.
+
+---
+
+## Current State (2026-08-21)
 
 | | |
 |---|---|
-| Version | **0.3.1**, both packages |
-| Tests | **533 passing, 0 failing** |
+| Version | **0.3.2**, both packages |
+| Tests | **536 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
