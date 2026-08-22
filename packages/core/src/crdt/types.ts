@@ -42,7 +42,32 @@ export interface DocumentSchema {
   doc_id: string;
   meta: DocumentMeta;
   messages: Record<string, ChatMessage>;
+  /**
+   * Who this conversation belongs to, keyed by `did:key`.
+   *
+   * The guest list. Synchronisation shares a document only with peers
+   * named here, which is what stops a contact receiving conversations
+   * they were never part of.
+   *
+   * It lives inside the document deliberately, so it survives a device
+   * replacement along with the history it governs. The cost is that
+   * everyone legitimately holding the document can read it — for a
+   * two-party chat that discloses nothing either side does not already
+   * know, and for a group it matches what every mainstream messenger
+   * shows its members.
+   *
+   * A document with no entries is shared with nobody.
+   */
+  participants: Record<string, ParticipantRecord>;
   [key: string]: unknown;
+}
+
+/** A participant's standing in a conversation. */
+export interface ParticipantRecord {
+  /** Participant's did:key, repeated for convenience when iterating. */
+  did: string;
+  /** Unix seconds when they were added. */
+  addedAt: number;
 }
 
 // ─── Sync Protocol Messages (RFC 002 §4.2) ──────────────────────────────────

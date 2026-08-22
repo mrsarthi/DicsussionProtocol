@@ -7,6 +7,27 @@
  */
 
 import * as Automerge from '@automerge/automerge';
+
+/** Schema URL stamped into every channel document (RFC 002 §3.1). */
+const SCHEMA_URL = 'https://schemas.dicsussion.org/v1/chat-room.json';
+
+/**
+ * Actor id used only to mint genesis, so the bytes match on every node.
+ *
+ * Automerge derives operation ids from the actor, so a per-node actor
+ * here would produce a per-node root — precisely what genesis exists to
+ * prevent.
+ */
+const GENESIS_ACTOR = '0'.repeat(32);
+
+/** A fresh actor id for local changes; Automerge wants 32 hex chars. */
+function localActor(): string {
+  let out = '';
+  for (let i = 0; i < 32; i++) {
+    out += Math.floor(Math.random() * 16).toString(16);
+  }
+  return out;
+}
 import { v4 as uuidv4 } from 'uuid';
 
 import type { ChatMessage, DocumentMeta, DocumentSchema } from './types.js';
@@ -39,6 +60,65 @@ interface ManagedDoc {
 export class DocumentManager {
   private readonly documents = new Map<string, ManagedDoc>();
 
+  /** Genesis bytes per docId; deterministic, so worth computing once. */
+  private readonly genesisCache = new Map<string, Uint8Array>();
+
+  /**
+   * The identical starting point every replica of a document must share.
+   *
+   * **This is load-bearing, not a tidiness measure.** Automerge merges
+   * histories, and two replicas that each *created* the document have no
+   * shared history: each independently assigned the `messages` map, and
+   * merging those concurrent assignments keeps one map object and
+   * discards the other — silently deleting every message written into
+   * the loser. Because the winner is deterministic, all replicas then
+   * converge on the same truncated document and their state roots match,
+   * so synchronisation reports success and never repairs it.
+   *
+   * Starting from byte-identical genesis means the container objects are
+   * the *same* object in every replica, so concurrent writes land in it
+   * side by side, which is the behaviour a CRDT is chosen for.
+   *
+   * Every field here must be derived from `docId` alone. Anything
+   * varying per node — a title, a creation timestamp — belongs in a
+   * change applied afterwards, where it merges as an ordinary
+   * last-write-wins scalar instead of forking the root.
+   *
+   * The returned document is loaded under a **fresh local actor**. The
+   * fixed actor exists only to make the genesis bytes identical; leaving
+   * it in place would attribute every later change to it, and two nodes
+   * editing would then claim the same actor and sequence number, which
+   * Automerge rejects outright as a duplicate.
+   */
+  private genesis(docId: string): Automerge.Doc<DocumentSchema> {
+    let bytes = this.genesisCache.get(docId);
+
+    if (!bytes) {
+      // `Automerge.from` stamps the wall clock into the change it
+      // creates, so two nodes minting genesis a millisecond apart would
+      // produce different bytes under the same actor and sequence —
+      // which Automerge rejects on merge as a duplicate seq, and only
+      // sometimes, depending on timing. Building it as an explicit
+      // change with a pinned time keeps the bytes identical forever.
+      const seed = Automerge.change(
+        Automerge.init<DocumentSchema>({ actor: GENESIS_ACTOR }),
+        { time: 0 },
+        (draft) => {
+          draft.$schema = SCHEMA_URL;
+          draft.doc_id = docId;
+          draft.meta = { title: '', createdAt: 0 };
+          draft.messages = {};
+          draft.participants = {};
+        },
+      );
+
+      bytes = Automerge.save(seed);
+      this.genesisCache.set(docId, bytes);
+    }
+
+    return Automerge.load<DocumentSchema>(bytes, { actor: localActor() });
+  }
+
   /**
    * Create a new CRDT document with initial metadata.
    *
@@ -53,11 +133,11 @@ export class DocumentManager {
       throw new Error(`Document already exists: ${id}`);
     }
 
-    const doc = Automerge.from<DocumentSchema>({
-      $schema: 'https://schemas.dicsussion.org/v1/chat-room.json',
-      doc_id: id,
-      meta: { title, createdAt: Math.floor(Date.now() / 1000) },
-      messages: {},
+    // From shared genesis, then the local details as a change — see
+    // `genesis` for why this cannot be a plain `Automerge.from`.
+    const doc = Automerge.change(this.genesis(id), (draft) => {
+      draft.meta.title = title;
+      draft.meta.createdAt = Math.floor(Date.now() / 1000);
     });
 
     this.documents.set(id, {
@@ -233,10 +313,10 @@ export class DocumentManager {
   /**
    * Get a document for synchronisation, creating an empty one if absent.
    *
-   * Unlike `createDocument`, this uses `Automerge.init()` so the local
-   * replica contributes no initial operations of its own — the peer's
-   * history is adopted verbatim during sync. Using `Automerge.from()`
-   * here would seed conflicting `meta`/`$schema` writes.
+   * Uses the same genesis as `createDocument`, so a replica that only
+   * ever receives a document shares history with one that created it.
+   * An empty `Automerge.init()` here would be a *different* root, which
+   * is the conflict this exists to avoid.
    *
    * @param docId The document UUID.
    * @returns The existing or newly created document.
@@ -262,7 +342,7 @@ export class DocumentManager {
       );
     }
 
-    const doc = Automerge.init<DocumentSchema>();
+    const doc = this.genesis(docId);
     this.documents.set(docId, {
       doc,
       changeCount: 0,
