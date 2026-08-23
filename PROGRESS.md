@@ -760,18 +760,70 @@ was one layer earlier than the symptom.
 
 ---
 
+## Task: 0.5.0 — removal that reaches the protocol
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-23
+
+Closes the last three open upstream items from the EchoIt agent, and a
+gap in 0.4.0's own membership work.
+
+### Finding 6 — a distrusted peer could not be un-done
+0.4.0 gave conversations a participant list that only ever grew.
+`removeParticipant` now exists, and removal applies in both directions.
+
+**0.4.0 checked membership outbound and never inbound.** A peer removed
+from a conversation could keep writing into it — the half an application
+cannot fix for itself, since replicated changes are not individually
+authenticated and a local block suppresses display rather than
+authorship. That is the behaviour change in this release: traffic 0.4.0
+accepted is now refused.
+
+The first inbound check was wrong instructively. Applied unconditionally
+it refused the first message of every *new* conversation, because a
+channel absent locally has no participant list and therefore no
+participants. "Not a participant" and "never heard of it" decide opposite
+things.
+
+Not retroactive, and said so in the tests, the guide and RFC 004 rather
+than left implied. What a peer already holds is theirs.
+
+### Finding 12 — already fixed
+`@types/better-sqlite3` has been a declared dependency since 0.3.0 and is
+in published 0.4.0. The tracking note was stale, not the code.
+
+### SDK-4 — ticket helpers re-exported
+`encodeTicket` / `decodeTicket` / `TICKET_PREFIX` / `PeerTicket` from
+`@dicsussion/sdk`. `connect()` takes a `PeerTicket`, so a second package
+import to build one was friction with no purpose.
+
+### A test rewritten rather than adjusted
+The state-root check asserted wall-clock time while 500-odd tests ran
+beside it, measuring contention instead of the algorithm. Best-of-N
+batches narrowed it; sustained load defeated it anyway. Raising the
+threshold would have hidden what it exists to catch, so it compares two
+document counts measured back to back — load-independent, still failing
+an O(n²) root.
+
+### Method note
+A slowdown from 40s to 9m looked like a regression from this work and was
+not: stashing everything and timing the released commit reproduced it.
+Machine load. Worth measuring before attributing — and worth measuring
+*against a known-good commit* rather than against memory.
+
+---
+
 ## Current State (2026-08-23)
 
 | | |
 |---|---|
-| Version | **0.4.0**, both packages |
-| Tests | **546 passing, 0 failing** |
+| Version | **0.5.0**, both packages |
+| Tests | **549 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | 0.3.2 on npm; **0.4.0 pending** |
+| Published | 0.4.0 on npm; **0.5.0 pending** |
 | Docs | `HOW_TO_USE.md` + a README on each package |
 
 **Test suites:** 11 e2e, 14 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT, plus
