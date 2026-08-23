@@ -248,7 +248,10 @@ test.describe('Suite 3.4 — Groth16 on the Message Path', () => {
   }
       await joiner.connect(creator.getTicket());
 
-      const group = await creator.groups.createGroup('open', [], {
+      // The roster is the guest list, so a group with a member has to
+      // name them — an empty roster means "just me", and the joiner is
+      // then refused in both directions.
+      const group = await creator.groups.createGroup('open', [joiner.did], {
         requireProofs: true,
       });
       await joiner.groups.importGroup(

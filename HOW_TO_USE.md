@@ -188,6 +188,23 @@ client.chat.createChannel('the-group', [carol.did]);  // now in this chat
 They receive the conversation from that point, including its history —
 so admit people deliberately rather than as a side effect of pairing.
 
+### Removing someone
+
+```ts
+client.chat.removeParticipant('the-group', theirDid);
+```
+
+They stop receiving new messages, stop being offered the conversation,
+and **their own messages into it are refused**. That last part is the one
+a Block button in your own app cannot do on its own: replicated changes
+are not individually authenticated, so a peer still on the list can keep
+writing into the shared document however your UI feels about them.
+
+**It is not retroactive.** Whatever they already received is on their
+device and stays there. No messaging system can reach into someone else's
+storage — so tell your users that blocking stops what comes next, rather
+than implying a conversation can be un-shared.
+
 ---
 
 ## 5. Groups, and how messages travel

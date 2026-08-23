@@ -107,6 +107,17 @@ how a contact ends up holding conversations they were never part of.
 Pairing someone *later* does not admit them to existing conversations.
 Call `createChannel` again — it is idempotent and keeps the current list.
 
+To remove someone:
+
+```ts
+client.chat.removeParticipant('the-group', theirDid);
+```
+
+They stop receiving messages and their own writes into that conversation
+are refused — which a local block cannot do, since replicated changes are
+not individually authenticated. It is **not** retroactive: what they
+already hold stays theirs.
+
 ## Groups
 
 A group is a conversation with more than two people on its list; there is
@@ -167,6 +178,7 @@ for writing the `pipe`.
 client.did                       // did:key:z6Mk…
 client.encryptionPublicKey       // X25519 public key
 client.chat.createChannel(channelId, [theirDid])
+client.chat.removeParticipant(channelId, theirDid)
 client.getTicket()               // PeerTicket — see the ticket note below
 client.addPeer(did, key)
 await client.connect(ticket)

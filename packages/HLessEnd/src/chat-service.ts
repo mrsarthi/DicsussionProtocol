@@ -146,6 +146,22 @@ export class ChatService {
   }
 
   /**
+   * Remove someone from a conversation.
+   *
+   * They stop receiving new messages, stop being offered the document,
+   * and their own pushes are refused. **What they already hold is
+   * theirs** — removal is not retroactive, and an application should say
+   * so rather than implying a chat can be un-shared.
+   *
+   * @param channelId The conversation.
+   * @param did Participant to remove.
+   * @returns Whether they were a participant.
+   */
+  removeParticipant(channelId: string, did: string): boolean {
+    return this.requireDeps().documents.removeParticipant(channelId, did);
+  }
+
+  /**
    * Send an E2EE message to a channel.
    *
    * The message is written to the channel's CRDT document immediately so

@@ -64,3 +64,14 @@ export type {
   SdkChatMessage,
   SendMessageOptions,
 } from './types.js';
+
+/**
+ * Ticket helpers, re-exported for convenience.
+ *
+ * `connect()` takes a `PeerTicket`, and every application has to move one
+ * between devices somehow — so needing a second package import to encode
+ * or decode one is friction with no purpose. The canonical definitions
+ * live in `@dicsussion/core/transport`; these are the same symbols.
+ */
+export { decodeTicket, encodeTicket, TICKET_PREFIX } from '@dicsussion/core/transport';
+export type { PeerTicket } from '@dicsussion/core/transport';

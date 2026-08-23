@@ -177,6 +177,37 @@ export class DocumentManager {
   }
 
   /**
+   * Remove a participant from a conversation's guest list.
+   *
+   * **This stops future sharing. It cannot undo past sharing.** Anything
+   * the peer already received is on their device and stays there — no
+   * message protocol can reach into someone else's storage, and any
+   * claim otherwise would be theatre. What removal does achieve is
+   * real, and in both directions: they are no longer sent new messages,
+   * no longer offered the document, and their pushes are refused rather
+   * than merged.
+   *
+   * That second half matters as much as the first. CRDT changes are not
+   * individually authenticated, so a peer who remains in the list can
+   * keep writing into the shared document regardless of any local block.
+   *
+   * @param docId The conversation.
+   * @param did Participant to remove.
+   * @returns Whether they were on the list.
+   */
+  removeParticipant(docId: string, did: string): boolean {
+    const managed = this.documents.get(docId);
+    if (!managed?.doc.participants?.[did]) return false;
+
+    managed.doc = Automerge.change(managed.doc, (draft) => {
+      delete draft.participants[did];
+    });
+    managed.changeCount++;
+
+    return true;
+  }
+
+  /**
    * Whether a `did:key` belongs to a conversation.
    *
    * Absent document or empty list means no — a conversation nobody is

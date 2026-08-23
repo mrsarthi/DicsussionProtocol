@@ -236,6 +236,7 @@ export class DicsussionClient {
       // to, which leaked conversations quite apart from synchronisation.
       mayReceive: (peerDid, channelId) =>
         this.documents.isParticipant(channelId, peerDid),
+      knowsChannel: (channelId) => this.documents.hasDocument(channelId),
       syncEngine: this.syncEngine,
       membershipSync: this.membershipSync,
       onMessage: async (payload) => {

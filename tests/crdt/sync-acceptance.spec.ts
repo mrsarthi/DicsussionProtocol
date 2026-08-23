@@ -172,35 +172,44 @@ test.describe('CRDT — RFC 002 §7 Acceptance Criteria', () => {
     expect(rootsEqual(before, computeManagerStateRoot(documents))).toBe(false);
   });
 
-  test('state root for 50 documents completes within budget', () => {
-    const documents = populated(50);
-
-    // Warm up, so the measurement is not dominated by first-call JIT.
-    computeManagerStateRoot(documents);
-
-    // Best of several batches, not the mean of one.
+  test('state root cost grows with document count, not faster', () => {
+    // Scaling, not a stopwatch.
     //
-    // This runs alongside 500-odd other tests across parallel workers, so
-    // any single batch can be preempted by the scheduler — and a mean is
-    // dominated by that pause rather than by the work. The fastest batch
-    // is the least-contended observation, which is the one that actually
-    // says something about the algorithm. Averaging instead made this the
-    // only test in the suite that failed under load and passed alone.
-    const iterations = 20;
-    const batches = 5;
-    let perCall = Infinity;
+    // RFC 002 §7 states < 2 ms for 50 documents on mobile hardware, and
+    // an earlier version of this asserted that wall-clock figure
+    // directly. On a machine running 500-odd other tests it measured
+    // contention rather than the algorithm, and failed or passed
+    // according to what else was running — best-of-N batches narrowed
+    // that but did not fix it, because sustained load slows every batch.
+    //
+    // What this test is actually for is catching a change from linear to
+    // quadratic. Comparing two sizes measured back to back is immune to
+    // machine speed and load, because both measurements suffer the same
+    // contention. Absolute conformance to the RFC's budget belongs on
+    // target hardware, not in a suite running on whatever laptop is free.
+    const measure = (count: number): number => {
+      const documents = populated(count);
+      computeManagerStateRoot(documents); // warm up
 
-    for (let batch = 0; batch < batches; batch++) {
-      const started = performance.now();
-      for (let i = 0; i < iterations; i++) {
-        computeManagerStateRoot(documents);
+      const iterations = 20;
+      const batches = 5;
+      let best = Infinity;
+
+      for (let batch = 0; batch < batches; batch++) {
+        const started = performance.now();
+        for (let i = 0; i < iterations; i++) computeManagerStateRoot(documents);
+        best = Math.min(best, (performance.now() - started) / iterations);
       }
-      perCall = Math.min(perCall, (performance.now() - started) / iterations);
-    }
 
-    // RFC 002 §7 specifies < 2 ms on mobile hardware. This is a desktop,
-    // so the bar is set generously — the point is to catch an algorithmic
-    // regression, not to certify mobile performance.
-    expect(perCall).toBeLessThan(2);
+      return best;
+    };
+
+    const small = measure(10);
+    const large = measure(50);
+
+    // Five times the documents. Linear predicts ~5x; the ceiling leaves
+    // room for constant factors and cache effects while still failing an
+    // O(n^2) root, which would be ~25x.
+    expect(large / small).toBeLessThan(12);
   });
 });

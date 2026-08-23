@@ -396,6 +396,30 @@ absence of delivery.
 A group is a conversation with more than two participants. No separate
 group type exists for ordinary chat.
 
+#### Removal
+
+An implementation MUST provide a way to remove a participant, and the
+removal MUST apply in both directions: the peer is no longer sent
+messages, no longer offered the document, **and their own messages and
+document pushes are refused**.
+
+The inbound half is the one that cannot be achieved above the protocol.
+CRDT changes are not individually authenticated, so a peer who remains a
+participant can write into a shared document however an application feels
+about them — a local block suppresses display, not authorship.
+
+Inbound checks MUST distinguish *"not a participant"* from *"this node
+has no such conversation"*. A conversation absent locally has no
+participant list, so an unconditional check refuses the first message of
+every new conversation a paired peer starts. An unknown channel from a
+paired peer is a new conversation; a known channel means its list is
+authoritative.
+
+**Removal is not retroactive and MUST NOT be presented as though it
+were.** Whatever the peer already received is on their device. No
+messaging protocol can reach into another party's storage, and an
+interface implying otherwise misleads the user about what was achieved.
+
 ---
 
 ### 7.5 Offline Queue & Listener Safety

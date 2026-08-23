@@ -37,6 +37,13 @@ export interface SessionManagerDeps {
    * than sending everything to everyone.
    */
   readonly mayReceive?: (peerDid: string, channelId: string) => boolean;
+  /**
+   * Whether this node already holds the conversation.
+   *
+   * Distinguishes "not a participant" from "never heard of it", which
+   * decide opposite things on the inbound path.
+   */
+  readonly knowsChannel?: (channelId: string) => boolean;
   readonly syncEngine: CrdtSyncEngine;
   /** Hand a decrypted message to the chat layer. */
   readonly onMessage: (payload: MessagePayload) => Promise<void>;
@@ -324,6 +331,27 @@ export class SessionManager {
     connection: IConnection,
   ): Promise<void> {
     const opened = openMessage(frame.payload, connection.sessionKey);
+
+    // Membership gates inbound traffic too, but only for conversations
+    // this node already has an opinion about.
+    //
+    // Checking only on the way out would leave a peer removed from a
+    // conversation still able to write into it. Checking unconditionally
+    // is worse: a channel that does not exist here yet has no
+    // participants, so every *new* conversation a paired peer starts
+    // would be refused — the first message of any chat, dropped.
+    //
+    // So: unknown channel means a new conversation from someone already
+    // paired, and `recordLocally` records them as a participant. A known
+    // channel means the list is authoritative.
+    const { channelId } = opened.payload;
+    if (
+      this.deps.knowsChannel?.(channelId) &&
+      !this.deps.mayReceive?.(connection.peerDid, channelId)
+    ) {
+      return;
+    }
+
     await this.deps.onMessage(opened.payload);
   }
 }
