@@ -174,6 +174,38 @@ export class SessionManager {
     return sends.length;
   }
 
+  /**
+   * Push a document's latest changes to everyone entitled to it.
+   *
+   * Reconciliation used to happen once, when a connection opened. That
+   * makes a two-party chat work and quietly breaks a group: a message
+   * reaching one member never travels onward, so with three people in a
+   * star the middle node holds everything and the outer two each see
+   * half a conversation, permanently and with nothing to indicate it.
+   *
+   * Calling this whenever a document changes locally is what makes
+   * changes propagate — including onward from a node that merely
+   * received them, which is the part a direct fan-out cannot do.
+   *
+   * Convergent and therefore self-limiting: once a peer is up to date
+   * `syncDocument` yields nothing, so relaying does not loop.
+   */
+  async pushDocument(docId: string): Promise<void> {
+    const sends: Array<Promise<void>> = [];
+
+    for (const peer of this.deps.peers.listPairedConnected()) {
+      const connection = peer.connection;
+      if (!connection) continue;
+      if (!this.deps.mayReceive?.(peer.did, docId)) continue;
+
+      for (const frame of this.deps.syncEngine.syncDocument(peer.did, docId)) {
+        sends.push(connection.send(StreamType.CRDT_SYNC, frame));
+      }
+    }
+
+    await Promise.all(sends);
+  }
+
   /** Route an inbound frame by sub-stream. */
   private async handleFrame(
     frame: Frame,

@@ -788,6 +788,15 @@ export class DicsussionClient {
       // the outbox.
       isOnline: () => this.online && this.peers.listPairedConnected().length > 0,
       publish: (payload) => this.sessions.publish(payload),
+      // Relay every local change onward. Without this a message reaches
+      // only peers this node is directly connected to, so a group in any
+      // shape but a full mesh splits into partial conversations.
+      onDocumentChanged: (channelId) => {
+        void this.sessions.pushDocument(channelId).catch(() => {
+          // A peer that cannot be reached now converges on reconnect;
+          // failing to relay must not fail the local write.
+        });
+      },
       persist: async (message) => {
         await this.messageStore?.save(message);
       },

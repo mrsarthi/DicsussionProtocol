@@ -45,6 +45,14 @@ export interface ChatServiceDeps {
   /** Persist a message to the local message stream. */
   readonly persist?: (message: SdkChatMessage) => Promise<void>;
   /**
+   * A channel document changed locally.
+   *
+   * Fires for messages this node sent *and* messages it received, since
+   * relaying what arrived is how a change reaches someone this node is
+   * not directly connected to.
+   */
+  readonly onDocumentChanged?: (channelId: string) => void;
+  /**
    * Derive an RLN signal for an anonymous send (RFC 003 §4.1).
    *
    * Absent when no ZK engine is attached, in which case anonymous sends
@@ -80,13 +88,19 @@ export class ChatService {
   private readonly emitter = new Emitter<Record<string, [SdkChatMessage]>>();
   private readonly listenerCounts = new Map<string, number>();
 
-  /**
-   * Message ids already emitted, per channel.
-   *
-   * Absent means the channel has never been observed, which seeds a
-   * baseline rather than replaying history — see `emitSynced`.
-   */
+  /** Message ids the application has already been told about. */
   private readonly emitted = new Map<string, Set<string>>();
+
+  /**
+   * Ids a channel already held when it was first observed.
+   *
+   * Deliberately distinct from `emitted`. History that was on disk at
+   * startup must not be replayed as though it were arriving, but nor has
+   * the application been told about it in this session — conflating the
+   * two suppresses the very first message on a channel, because seeding
+   * the baseline would mark it delivered before anything delivered it.
+   */
+  private readonly baseline = new Map<string, Set<string>>();
   private deps: ChatServiceDeps | null = null;
 
   constructor() {
@@ -400,28 +414,38 @@ export class ChatService {
     const deps = this.deps;
     if (!deps) return [];
 
-    const seen = this.emitted.get(channelId);
-
-    // First sight of this channel seeds the baseline instead of
-    // emitting. Otherwise the first sync after a restart replays the
-    // entire history as though it had just arrived.
-    if (!seen) {
-      const known = new Set(
-        Object.keys(deps.documents.getDocument(channelId)?.messages ?? {}),
+    // First sight of this channel records what it already held instead
+    // of emitting it. Otherwise the first sync after a restart replays
+    // the entire history as though it had just arrived.
+    if (!this.baseline.has(channelId)) {
+      this.baseline.set(
+        channelId,
+        new Set(Object.keys(deps.documents.getDocument(channelId)?.messages ?? {})),
       );
-      this.emitted.set(channelId, known);
       return [];
     }
 
-    const fresh: SdkChatMessage[] = [];
-    for (const message of await this.getHistory(channelId)) {
-      if (seen.has(message.id)) continue;
-      seen.add(message.id);
-      fresh.push(message);
-    }
+    const known = this.baseline.get(channelId)!;
+    const told = this.emitted.get(channelId);
+
+    const fresh = (await this.getHistory(channelId)).filter(
+      (message) => !known.has(message.id) && !told?.has(message.id),
+    );
 
     for (const message of fresh) this._emitMessage(channelId, message);
     return fresh;
+  }
+
+  /**
+   * Tell the engine this channel advanced, once the write has landed.
+   *
+   * Deferred by a microtask so the document is already updated when the
+   * push reads it, and so a failure to reach one peer cannot turn a
+   * local write into a thrown error.
+   */
+  private scheduleSync(deps: ChatServiceDeps, channelId: string): void {
+    if (!deps.onDocumentChanged) return;
+    queueMicrotask(() => deps.onDocumentChanged?.(channelId));
   }
 
   /** Record an id as emitted, so sync does not emit it a second time. */
@@ -436,6 +460,16 @@ export class ChatService {
    * Called internally by the client when frames arrive.
    */
   _emitMessage(channelId: string, message: SdkChatMessage): void {
+    // Once per message, whichever route delivered it first.
+    //
+    // A message can now arrive twice over: as an E2EE envelope on 0x02,
+    // and again in a document sync relayed by a peer in the middle. Both
+    // are legitimate and neither is redundant — the envelope is direct,
+    // the relay is how it reaches someone the sender cannot see — but an
+    // application must be told once, or a group chat shows every message
+    // as many times as there are paths to it.
+    if (this.emitted.get(channelId)?.has(message.id)) return;
+
     this.markEmitted(channelId, message.id);
     const eventName = `message:${channelId}`;
     this.emitter.emit(eventName, message);
@@ -469,6 +503,8 @@ export class ChatService {
     if (payload.authorDid) {
       documents.addParticipant(payload.channelId, payload.authorDid);
     }
+
+    this.scheduleSync(deps, payload.channelId);
 
     documents.addMessage(payload.channelId, {
       id: payload.id,
