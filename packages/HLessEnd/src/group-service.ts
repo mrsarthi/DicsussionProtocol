@@ -132,6 +132,11 @@ export class GroupService {
     await this.persist({ groupId, name, members: roster, createdAt });
     deps.documents.createDocument(name, groupId);
 
+    // A group's roster is its guest list. Recording it here is what lets
+    // the document synchronise at all — the sync policy refuses any
+    // conversation the peer is not named in.
+    for (const member of roster) deps.documents.addParticipant(groupId, member);
+
     return { groupId, name, members: roster, createdAt };
   }
 
@@ -204,6 +209,9 @@ export class GroupService {
 
     if (!deps.documents.hasDocument(groupId)) {
       deps.documents.createDocument(info.name, groupId);
+      for (const member of info.members) {
+        deps.documents.addParticipant(groupId, member);
+      }
     }
   }
 

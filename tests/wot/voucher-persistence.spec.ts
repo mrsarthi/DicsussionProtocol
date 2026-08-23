@@ -131,6 +131,12 @@ test.describe('WoT — Replay Protection Across Restart', () => {
 
       alice.addPeer(bob.did, bob.encryptionPublicKey);
       bob.addPeer(alice.did, alice.encryptionPublicKey);
+  for (const channel of ['tampered']) {
+    alice.chat.createChannel(channel, [bob.did]);
+  }
+  for (const channel of ['tampered']) {
+    bob.chat.createChannel(channel, [alice.did]);
+  }
 
       // Redeem a voucher the ordinary way.
       const pending = alice.trust.beginVoucherRequest(await bob.getEndorsementKey(), 5n);

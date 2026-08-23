@@ -150,6 +150,49 @@ export class DocumentManager {
   }
 
   /**
+   * Add a participant to a conversation's guest list.
+   *
+   * The list decides who a document may be synchronised with, so this is
+   * an authorization boundary rather than a display detail. It lives in
+   * the document so it survives a device replacement alongside the
+   * history it governs.
+   *
+   * Idempotent: re-adding keeps the original `addedAt`, so two replicas
+   * adding the same person do not fight over the timestamp.
+   *
+   * @param docId The conversation.
+   * @param did Participant's did:key.
+   */
+  addParticipant(docId: string, did: string): void {
+    const managed = this.documents.get(docId);
+    if (!managed) throw new Error(`Unknown document: ${docId}`);
+    if (managed.doc.participants?.[did]) return;
+
+    managed.doc = Automerge.change(managed.doc, (draft) => {
+      // A document minted before participants existed has no map.
+      if (!draft.participants) draft.participants = {};
+      draft.participants[did] = { did, addedAt: Math.floor(Date.now() / 1000) };
+    });
+    managed.changeCount++;
+  }
+
+  /**
+   * Whether a `did:key` belongs to a conversation.
+   *
+   * Absent document or empty list means no — a conversation nobody is
+   * recorded in is shared with nobody, which is what makes the default
+   * safe for anything created before the list existed.
+   */
+  isParticipant(docId: string, did: string): boolean {
+    return this.documents.get(docId)?.doc.participants?.[did] !== undefined;
+  }
+
+  /** Everyone recorded in a conversation. */
+  participants(docId: string): string[] {
+    return Object.keys(this.documents.get(docId)?.doc.participants ?? {});
+  }
+
+  /**
    * Get the current state of a document.
    *
    * @param docId The document UUID.

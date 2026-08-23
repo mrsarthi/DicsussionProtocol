@@ -101,6 +101,37 @@ export class ChatService {
   }
 
   /**
+   * Create a conversation and record who belongs to it.
+   *
+   * The guest list decides who the conversation may be sent to and
+   * synchronised with, so this is an authorization boundary rather than
+   * bookkeeping. The local node is always included.
+   *
+   * Calling it is optional — `sendMessage` will create a channel on
+   * first use — but doing so explicitly is clearer than relying on the
+   * first message, and it is the only way to establish membership before
+   * anything is sent.
+   *
+   * Idempotent: an existing channel gains any participants it lacks and
+   * keeps everything it already had.
+   *
+   * @param channelId The conversation.
+   * @param participants `did:key`s entitled to it, besides this node.
+   */
+  createChannel(channelId: string, participants: readonly string[] = []): void {
+    const deps = this.requireDeps();
+
+    if (!deps.documents.hasDocument(channelId)) {
+      deps.documents.createDocument(channelId, channelId);
+    }
+
+    deps.documents.addParticipant(channelId, deps.getLocalDid());
+    for (const did of participants) {
+      deps.documents.addParticipant(channelId, did);
+    }
+  }
+
+  /**
    * Send an E2EE message to a channel.
    *
    * The message is written to the channel's CRDT document immediately so
@@ -153,7 +184,13 @@ export class ChatService {
     };
 
     // Local-first: record it before attempting any network work.
-    this.recordLocally(deps, payload);
+    this.recordLocally(deps, payload, options.participants);
+
+    // Our own message is returned to the caller, never delivered to them
+    // as an arrival. Marking it emitted keeps the sync diff from treating
+    // it as news later — otherwise a peer's first sync makes every
+    // message this node sent appear to arrive from outside.
+    this.markEmitted(options.channelId, id);
 
     const message: SdkChatMessage = {
       id,
@@ -405,11 +442,32 @@ export class ChatService {
   }
 
   /** Write a payload into the channel's CRDT document. */
-  private recordLocally(deps: ChatServiceDeps, payload: MessagePayload): void {
+  private recordLocally(
+    deps: ChatServiceDeps,
+    payload: MessagePayload,
+    participants?: readonly string[],
+  ): void {
     const { documents } = deps;
 
     if (!documents.hasDocument(payload.channelId)) {
       documents.createDocument(payload.channelId, payload.channelId);
+
+      // Record the guest list at creation, because this is the only
+      // moment it can be inferred. A channel comes into existence with
+      // its first message and carries no membership of its own, so a
+      // list not written here is never written — and the sync policy
+      // refuses a conversation nobody is recorded in, which would leave
+      // it stranded on one device.
+      documents.addParticipant(payload.channelId, deps.getLocalDid());
+      for (const did of participants ?? []) {
+        documents.addParticipant(payload.channelId, did);
+      }
+    }
+
+    // An author arriving in a channel we already hold belongs in it —
+    // otherwise a peer who joins later can never be synced to.
+    if (payload.authorDid) {
+      documents.addParticipant(payload.channelId, payload.authorDid);
     }
 
     documents.addMessage(payload.channelId, {

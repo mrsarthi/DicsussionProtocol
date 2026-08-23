@@ -219,12 +219,23 @@ export class DicsussionClient {
     this.trust = new TrustService();
     this.identity = new IdentityService();
     this.outbox = new OutboxManager(this.config.maxOutboxSize);
-    this.syncEngine = new CrdtSyncEngine(this.documents);
+    // Deny-by-default authorization for synchronisation. Pairing means
+    // "we agreed to talk", not "you may read every conversation I hold";
+    // without this a sync offered whatever the node happened to have, so
+    // a second contact received the first one's history, backdated.
+    this.syncEngine = new CrdtSyncEngine(this.documents, (peerDid, docId) =>
+      this.documents.isParticipant(docId, peerDid),
+    );
     this.membershipSync = new MembershipSyncEngine((channelId) =>
       this.groups.getMembershipTree(channelId),
     );
     this.sessions = new SessionManager({
       peers: this.peers,
+      // The same boundary on the direct send path. Publishing fanned a
+      // message out to every paired peer whatever channel it belonged
+      // to, which leaked conversations quite apart from synchronisation.
+      mayReceive: (peerDid, channelId) =>
+        this.documents.isParticipant(channelId, peerDid),
       syncEngine: this.syncEngine,
       membershipSync: this.membershipSync,
       onMessage: async (payload) => {

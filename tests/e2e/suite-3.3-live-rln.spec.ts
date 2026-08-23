@@ -40,6 +40,12 @@ async function pair(): Promise<{
 
   alice.addPeer(bob.did, bob.encryptionPublicKey);
   bob.addPeer(alice.did, alice.encryptionPublicKey);
+  for (const channel of ['anon', 'general']) {
+    alice.chat.createChannel(channel, [bob.did]);
+  }
+  for (const channel of ['anon', 'general']) {
+    bob.chat.createChannel(channel, [alice.did]);
+  }
   await alice.connect(bob.getTicket());
   await waitFor(() => bob.getNetworkStatus().peerCount === 1);
 

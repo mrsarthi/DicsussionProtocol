@@ -63,6 +63,18 @@ test.describe('Suite 4.3 — Pairing from tickets', () => {
       await alice.call('pairFromTicket', { ticket: bob.ticket });
       await bob.call('pairFromTicket', { ticket: alice.ticket });
 
+      // A ticket carries identity, not membership: it says who a peer is,
+      // never which conversations they belong to. The application decides
+      // that, which is what stops a new contact inheriting old chats.
+      await alice.call('createChannel', {
+        channelId: 'general',
+        participants: [bob.did],
+      });
+      await bob.call('createChannel', {
+        channelId: 'general',
+        participants: [alice.did],
+      });
+
       // One dial. Two would open two connections for one peer pair.
       await alice.call('connect', { ticket: bob.ticket });
 
@@ -109,14 +121,25 @@ test.describe('Suite 4.3 — Pairing from tickets', () => {
 
     try {
       await alice.call('pairFromTicket', { ticket: bob.ticket });
+      // Alice intends this conversation for Bob from the outset. Bob has
+      // not accepted her yet, which is what the first send tests.
+      await alice.call('createChannel', {
+        channelId: 'general',
+        participants: [bob.did],
+      });
       await alice.call('connect', { ticket: bob.ticket });
 
       await alice.call('send', { channelId: 'general', content: 'too early' });
       await new Promise((resolve) => setTimeout(resolve, 2_000));
       expect(await bob.call<InboxEntry[]>('inbox')).toEqual([]);
 
-      // Bob accepts, on the connection that is already open.
+      // Bob accepts, on the connection that is already open — pairing
+      // her, and admitting her to the conversation.
       await bob.call('pairFromTicket', { ticket: alice.ticket });
+      await bob.call('createChannel', {
+        channelId: 'general',
+        participants: [alice.did],
+      });
 
       await alice.call('send', { channelId: 'general', content: 'heard' });
       const inbox = await inboxReaches(bob, 1);

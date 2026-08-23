@@ -25,6 +25,18 @@ import type { PeerRegistry } from './peer-registry.js';
 /** Collaborators the session manager needs. */
 export interface SessionManagerDeps {
   readonly peers: PeerRegistry;
+  /**
+   * Whether a peer belongs to a channel.
+   *
+   * Pairing authorises *a* conversation, not every conversation. Without
+   * this, publishing fanned a message out to every paired peer whatever
+   * channel it belonged to, so a contact received chats they were never
+   * part of — over the envelope path, quite apart from synchronisation.
+   *
+   * Defaults to refusing, so a caller that omits it sends nothing rather
+   * than sending everything to everyone.
+   */
+  readonly mayReceive?: (peerDid: string, channelId: string) => boolean;
   readonly syncEngine: CrdtSyncEngine;
   /** Hand a decrypted message to the chat layer. */
   readonly onMessage: (payload: MessagePayload) => Promise<void>;
@@ -140,6 +152,9 @@ export class SessionManager {
     for (const peer of this.deps.peers.listPairedConnected()) {
       const connection = peer.connection;
       if (!connection) continue;
+
+      // Paired is not the same as "in this conversation".
+      if (!this.deps.mayReceive?.(peer.did, payload.channelId)) continue;
 
       // Sealed under the connection's session key, not the peer's
       // long-term X25519 key. That is what makes the traffic forward

@@ -121,6 +121,19 @@ export interface SendMessageOptions {
   readonly channelId: string;
   readonly content: string;
   /**
+   * Who this conversation belongs to, as `did:key`s.
+   *
+   * Used only when the channel does not exist yet — the first message
+   * is what brings it into being, so it is the one moment membership
+   * can be established. The sender is always included.
+   *
+   * **Omitting this creates a conversation shared with nobody.** That is
+   * deliberate: the SDK cannot infer who a channel is for, and guessing
+   * is how a contact ends up receiving conversations they were never
+   * part of. Declare it, or the messages stay on this device.
+   */
+  readonly participants?: readonly string[];
+  /**
    * Send without attributing the message to this node's did:key.
    *
    * The message carries a `nullifierHash` instead of an `authorDid`

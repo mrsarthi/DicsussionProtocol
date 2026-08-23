@@ -451,6 +451,12 @@ test.describe('Transport — Full Client over the Relay', () => {
     try {
       alice.addPeer(bob.did, bob.encryptionPublicKey);
       bob.addPeer(alice.did, alice.encryptionPublicKey);
+  for (const channel of ['general']) {
+    alice.chat.createChannel(channel, [bob.did]);
+  }
+  for (const channel of ['general']) {
+    bob.chat.createChannel(channel, [alice.did]);
+  }
 
       const received: string[] = [];
       bob.chat.onMessage('general', (m) => received.push(m.content));

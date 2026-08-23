@@ -185,6 +185,12 @@ export class PeerMesh {
       for (const other of peers) {
         if (self === other) continue;
         await self.call('addPeer', { did: other.did, key: other.encryptionKey });
+        // Pairing authorises the peer; the channel admits them. Both are
+        // required, and a real application does both too.
+        await self.call('createChannel', {
+          channelId: 'general',
+          participants: [other.did],
+        });
       }
     }
 

@@ -45,6 +45,12 @@ async function createPeerPair(): Promise<{
   // Out-of-band pairing: each side learns the other's X25519 public key.
   alice.addPeer(bob.did, bob.encryptionPublicKey);
   bob.addPeer(alice.did, alice.encryptionPublicKey);
+  for (const channel of ['general', 'secret-channel']) {
+    alice.chat.createChannel(channel, [bob.did]);
+  }
+  for (const channel of ['general', 'secret-channel']) {
+    bob.chat.createChannel(channel, [alice.did]);
+  }
 
   return {
     alice,
@@ -55,6 +61,22 @@ async function createPeerPair(): Promise<{
       clearTransportRegistry();
     },
   };
+}
+
+/**
+ * Whether a peer is currently entitled to the shared channel.
+ *
+ * Pairing and channel membership are separate gates, and this asserts
+ * the gap between them rather than assuming it.
+ */
+async function newcomerReceives(
+  sender: DicsussionClient,
+  _receiver: DicsussionClient,
+): Promise<boolean> {
+  const before = sender.outboxSize;
+  await sender.chat.sendMessage({ channelId: 'general', content: 'probe' });
+  // A message with no eligible recipient is queued rather than sent.
+  return sender.outboxSize === before;
 }
 
 test.describe('Suite 1.2 — E2EE Message Exchange', () => {
@@ -335,6 +357,12 @@ test.describe('Suite 1.2 — Pairing Gates Message Delivery', () => {
     try {
       alice.addPeer(bob.did, bob.encryptionPublicKey);
       bob.addPeer(alice.did, alice.encryptionPublicKey);
+  for (const channel of ['general', 'secret-channel']) {
+    alice.chat.createChannel(channel, [bob.did]);
+  }
+  for (const channel of ['general', 'secret-channel']) {
+    bob.chat.createChannel(channel, [alice.did]);
+  }
       await alice.connect(bob.getTicket());
 
       const seen: string[] = [];
@@ -369,8 +397,15 @@ test.describe('Suite 1.2 — Pairing Gates Message Delivery', () => {
       await new Promise((r) => setTimeout(r, 300));
       expect(seen).toEqual([]);
 
-      // The victim decides to accept them.
+      // The victim decides to accept them. Pairing alone is not enough:
+      // it authorises *a* conversation, not every conversation already
+      // on the device, so the channel has to admit them separately.
+      // Without that split, accepting one contact would hand them every
+      // chat held with everyone else, backdated.
       victim.addPeer(newcomer.did, newcomer.encryptionPublicKey);
+      expect(await newcomerReceives(victim, newcomer)).toBe(false);
+
+      victim.chat.createChannel('general', [newcomer.did]);
 
       await victim.chat.sendMessage({ channelId: 'general', content: 'after' });
       await new Promise((r) => setTimeout(r, 400));

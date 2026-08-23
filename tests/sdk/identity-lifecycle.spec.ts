@@ -239,6 +239,8 @@ test.describe('SDK — Key Revocation', () => {
     try {
       alice.addPeer(bob.did, bob.encryptionPublicKey);
       bob.addPeer(alice.did, alice.encryptionPublicKey);
+  alice.chat.createChannel('general', [bob.did]);
+  bob.chat.createChannel('general', [alice.did]);
       await alice.connect(bob.getTicket());
 
       const commitment = alice.identityCommitment;

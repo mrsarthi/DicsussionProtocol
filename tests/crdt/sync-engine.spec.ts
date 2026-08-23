@@ -12,6 +12,14 @@ import {
 } from '../../packages/core/src/crdt/sync-protocol.js';
 
 /**
+ * These suites exercise synchronisation mechanics, not who is
+ * entitled to what, so they opt in to sharing everything. The
+ * engine's default is to refuse — a caller that forgets a policy
+ * syncs nothing rather than syncing every conversation it holds.
+ */
+const SHARE_ALL = (): boolean => true;
+
+/**
  * Run the sync conversation to completion between two engines.
  *
  * Mirrors what the transport does with Stream 0x01 frames, but in-process
@@ -161,8 +169,8 @@ test.describe('CRDT — Sync Engine (Stream 0x01)', () => {
       authorDid: 'did:key:zA',
     });
 
-    const engineA = new CrdtSyncEngine(docsA);
-    const engineB = new CrdtSyncEngine(docsB);
+    const engineA = new CrdtSyncEngine(docsA, SHARE_ALL);
+    const engineB = new CrdtSyncEngine(docsB, SHARE_ALL);
 
     runSyncToCompletion(engineA, engineB);
 
@@ -176,8 +184,8 @@ test.describe('CRDT — Sync Engine (Stream 0x01)', () => {
     const docsA = new DocumentManager();
     const docsB = new DocumentManager();
 
-    const engineA = new CrdtSyncEngine(docsA);
-    const engineB = new CrdtSyncEngine(docsB);
+    const engineA = new CrdtSyncEngine(docsA, SHARE_ALL);
+    const engineB = new CrdtSyncEngine(docsB, SHARE_ALL);
 
     // Both empty ⇒ roots match ⇒ RFC 002 §4.2 step 2 short circuit.
     const rootSync = engineA.beginSync('peer-b');
@@ -205,8 +213,8 @@ test.describe('CRDT — Sync Engine (Stream 0x01)', () => {
       authorDid: 'did:key:zA',
     });
 
-    const engineA = new CrdtSyncEngine(docsA);
-    const engineB = new CrdtSyncEngine(docsB);
+    const engineA = new CrdtSyncEngine(docsA, SHARE_ALL);
+    const engineB = new CrdtSyncEngine(docsB, SHARE_ALL);
 
     // First sync gives B the document.
     runSyncToCompletion(engineA, engineB);
@@ -247,8 +255,8 @@ test.describe('CRDT — Sync Engine (Stream 0x01)', () => {
       authorDid: 'did:key:zA',
     });
 
-    const engineA = new CrdtSyncEngine(docsA);
-    const engineB = new CrdtSyncEngine(docsB);
+    const engineA = new CrdtSyncEngine(docsA, SHARE_ALL);
+    const engineB = new CrdtSyncEngine(docsB, SHARE_ALL);
 
     const updates: string[] = [];
     engineB.onDocumentUpdate((u) => updates.push(u.docId));
@@ -260,7 +268,7 @@ test.describe('CRDT — Sync Engine (Stream 0x01)', () => {
 
   test('removePeer clears sync state', () => {
     const docs = new DocumentManager();
-    const engine = new CrdtSyncEngine(docs);
+    const engine = new CrdtSyncEngine(docs, SHARE_ALL);
 
     engine.registerPeer('peer-x');
     expect(engine.peerCount).toBe(1);

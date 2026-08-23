@@ -41,7 +41,12 @@ async function createMesh(): Promise<{
   // Out-of-band pairing across the full mesh.
   for (const self of nodes) {
     for (const other of nodes) {
-      if (self !== other) self.addPeer(other.did, other.encryptionPublicKey);
+      if (self !== other) {
+        self.addPeer(other.did, other.encryptionPublicKey);
+        for (const channel of ['anon', 'general', 'mixed']) {
+          self.chat.createChannel(channel, [other.did]);
+        }
+      }
     }
   }
 
@@ -174,6 +179,12 @@ test.describe('Suite 3.2 — End-to-End Anonymous Chat', () => {
     try {
       alice.addPeer(bob.did, bob.encryptionPublicKey);
       bob.addPeer(alice.did, alice.encryptionPublicKey);
+  for (const channel of ['anon', 'general', 'mixed']) {
+    alice.chat.createChannel(channel, [bob.did]);
+  }
+  for (const channel of ['anon', 'general', 'mixed']) {
+    bob.chat.createChannel(channel, [alice.did]);
+  }
 
       const frames: Uint8Array[] = [];
       const connection = await bob.connect(alice.getTicket());

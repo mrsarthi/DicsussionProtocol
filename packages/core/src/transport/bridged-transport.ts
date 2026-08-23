@@ -238,6 +238,12 @@ class BridgedTransport implements ITransport {
       ...(ticket.derpRelay ? { relayUrl: ticket.derpRelay } : {}),
     });
 
+    // A host may hand back an id it has used before. Any reader still
+    // held against it finished the previous connection in frame mode, so
+    // reusing it would feed this handshake to the frame parser — which
+    // surfaces as a nonsense control length rather than as a reuse. The
+    // accepting side does the same on `onInbound`.
+    this.teardown(connectionId);
     const channel = this.channelFor(connectionId);
 
     // Dialer side of the three-message handshake. The challenge is what

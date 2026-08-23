@@ -23,6 +23,14 @@ import {
   SyncMessageType,
 } from '../../packages/core/src/crdt/sync-protocol.js';
 
+/**
+ * These suites exercise synchronisation mechanics, not who is
+ * entitled to what, so they opt in to sharing everything. The
+ * engine's default is to refuse — a caller that forgets a policy
+ * syncs nothing rather than syncing every conversation it holds.
+ */
+const SHARE_ALL = (): boolean => true;
+
 /** A manager holding `count` documents, each with one message. */
 function populated(count: number, seed = 0): DocumentManager {
   const documents = new DocumentManager();
@@ -87,8 +95,8 @@ test.describe('CRDT — RFC 002 §7 Acceptance Criteria', () => {
     // are history-dependent — two nodes that independently created the
     // same documents have different histories and will still exchange
     // deltas. Only a real sync makes their histories match.
-    const alice = new CrdtSyncEngine(populated(5));
-    const bob = new CrdtSyncEngine(new DocumentManager());
+    const alice = new CrdtSyncEngine(populated(5), SHARE_ALL);
+    const bob = new CrdtSyncEngine(new DocumentManager(), SHARE_ALL);
 
     alice.registerPeer('b');
     bob.registerPeer('a');
@@ -111,8 +119,8 @@ test.describe('CRDT — RFC 002 §7 Acceptance Criteria', () => {
 
   test('divergent nodes do exchange data, so the check is meaningful', () => {
     // Guards against the previous test passing because sync is broken.
-    const alice = new CrdtSyncEngine(populated(5, 1));
-    const bob = new CrdtSyncEngine(new DocumentManager());
+    const alice = new CrdtSyncEngine(populated(5, 1), SHARE_ALL);
+    const bob = new CrdtSyncEngine(new DocumentManager(), SHARE_ALL);
 
     alice.registerPeer('b');
     bob.registerPeer('a');
@@ -125,8 +133,8 @@ test.describe('CRDT — RFC 002 §7 Acceptance Criteria', () => {
     const aliceDocs = populated(5);
     const bobDocs = new DocumentManager();
 
-    const alice = new CrdtSyncEngine(aliceDocs);
-    const bob = new CrdtSyncEngine(bobDocs);
+    const alice = new CrdtSyncEngine(aliceDocs, SHARE_ALL);
+    const bob = new CrdtSyncEngine(bobDocs, SHARE_ALL);
     alice.registerPeer('b');
     bob.registerPeer('a');
 

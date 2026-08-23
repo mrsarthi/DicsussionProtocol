@@ -86,6 +86,12 @@ async function spawn(hub: Hub, name: string): Promise<DicsussionClient> {
 function pair(a: DicsussionClient, b: DicsussionClient): void {
   a.addPeer(b.did, b.encryptionPublicKey);
   b.addPeer(a.did, a.encryptionPublicKey);
+  for (const channel of ['general']) {
+    a.chat.createChannel(channel, [b.did]);
+  }
+  for (const channel of ['general']) {
+    b.chat.createChannel(channel, [a.did]);
+  }
 }
 
 test.describe('SDK — delivery with more than one peer', () => {

@@ -104,6 +104,22 @@ async function handle(command: Command): Promise<unknown> {
       return null;
     }
 
+    /**
+     * Declare a conversation and who belongs to it.
+     *
+     * Pairing authorises a peer; it does not admit them to every
+     * conversation on the device. A harness that only pairs therefore
+     * sends into a channel with no eligible recipients, which is exactly
+     * what a real application would do if it forgot to say who a chat is
+     * for — so the op exists rather than the behaviour being special-cased.
+     */
+    case 'createChannel':
+      client.chat.createChannel(
+        command['channelId'] as string,
+        (command['participants'] as string[] | undefined) ?? [],
+      );
+      return null;
+
     case 'connect':
       await client.connect(command['ticket'] as PeerTicket);
       return null;

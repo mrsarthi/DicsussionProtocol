@@ -28,6 +28,15 @@ import {
 import type { DocumentSchema } from './types.js';
 
 /** Emitted when a peer's changes advance a local document. */
+/**
+ * Whether `peerId` may see `docId`.
+ *
+ * Consulted in both directions — before offering a document and before
+ * adopting one — so a peer can neither pull nor push a conversation it
+ * has no part in.
+ */
+export type SharePolicy = (peerId: string, docId: string) => boolean;
+
 export interface DocumentUpdate {
   readonly peerId: string;
   readonly docId: string;
@@ -47,7 +56,32 @@ export class CrdtSyncEngine {
   private readonly peerStates = new Map<string, PeerSyncStates>();
   private readonly updateHandlers = new Set<DocumentUpdateHandler>();
 
-  constructor(private readonly documents: DocumentManager) {}
+  /**
+   * @param documents Local document set.
+   * @param mayShare Whether a peer is entitled to a document. Defaults
+   *   to refusing everything, so a caller that forgets to supply a rule
+   *   syncs nothing rather than syncing everything — the failure that
+   *   leaks is silent, the failure that refuses is not.
+   */
+  constructor(
+    private readonly documents: DocumentManager,
+    private readonly mayShare: SharePolicy = () => false,
+  ) {}
+
+  /**
+   * Documents this peer is entitled to receive.
+   *
+   * Pairing is not entitlement. A contact is someone you agreed to talk
+   * to, not someone you agreed to hand every other conversation — and
+   * without this filter a sync offered whatever the node happened to
+   * hold, so adding a second contact disclosed the first one's history
+   * to them, backdated, with nothing on either screen to say so.
+   */
+  private shareableWith(peerId: string): string[] {
+    return this.documents
+      .listDocuments()
+      .filter((docId) => this.mayShare(peerId, docId));
+  }
 
   /** Peers currently tracked by the engine. */
   get peerCount(): number {
@@ -162,6 +196,11 @@ export class CrdtSyncEngine {
     const { docId } = frame;
     const states = this.peerStates.get(peerId)!;
 
+    // The mirror of the outbound filter. A peer may push any docId it
+    // likes, and adopting one uninvited both stores a conversation this
+    // node has no standing in and mints a document a stranger named.
+    if (!this.mayShare(peerId, docId)) return [];
+
     const doc = this.documents.ensureSyncDocument(docId);
     const syncState = states.get(docId) ?? Automerge.initSyncState();
 
@@ -190,7 +229,7 @@ export class CrdtSyncEngine {
   private generateAllDocumentMessages(peerId: string): Uint8Array[] {
     const messages: Uint8Array[] = [];
 
-    for (const docId of this.documents.listDocuments()) {
+    for (const docId of this.shareableWith(peerId)) {
       const message = this.generateFor(peerId, docId);
       if (message) messages.push(message);
     }

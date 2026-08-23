@@ -149,12 +149,18 @@ test.describe('Suite 3.4 — Groth16 on the Message Path', () => {
     try {
       lax.addPeer(strict.did, strict.encryptionPublicKey);
       strict.addPeer(lax.did, lax.encryptionPublicKey);
+  for (const channel of ['ad-hoc', 'anon']) {
+    lax.chat.createChannel(channel, [strict.did]);
+  }
+  for (const channel of ['ad-hoc', 'anon']) {
+    strict.chat.createChannel(channel, [lax.did]);
+  }
       await lax.connect(strict.getTicket());
 
       // Created by the lax peer, so the anchor says proofs are not
       // required — and the strict peer honours the channel, not its own
       // preference.
-      const group = await lax.groups.createGroup('mixed', []);
+      const group = await lax.groups.createGroup('mixed', [strict.did]);
       const info = await lax.groups.getGroupInfo(group.groupId);
       await strict.groups.importGroup(
         info,
@@ -234,6 +240,12 @@ test.describe('Suite 3.4 — Groth16 on the Message Path', () => {
     try {
       joiner.addPeer(creator.did, creator.encryptionPublicKey);
       creator.addPeer(joiner.did, joiner.encryptionPublicKey);
+  for (const channel of ['ad-hoc', 'anon']) {
+    joiner.chat.createChannel(channel, [creator.did]);
+  }
+  for (const channel of ['ad-hoc', 'anon']) {
+    creator.chat.createChannel(channel, [joiner.did]);
+  }
       await joiner.connect(creator.getTicket());
 
       const group = await creator.groups.createGroup('open', [], {
@@ -381,9 +393,15 @@ test.describe('Suite 3.4 — Groth16 on the Message Path', () => {
     try {
       alice.addPeer(bob.did, bob.encryptionPublicKey);
       bob.addPeer(alice.did, alice.encryptionPublicKey);
+  for (const channel of ['ad-hoc', 'anon']) {
+    alice.chat.createChannel(channel, [bob.did]);
+  }
+  for (const channel of ['ad-hoc', 'anon']) {
+    bob.chat.createChannel(channel, [alice.did]);
+  }
       await alice.connect(bob.getTicket());
 
-      const group = await alice.groups.createGroup('shared', []);
+      const group = await alice.groups.createGroup('shared', [bob.did]);
       const info = await alice.groups.getGroupInfo(group.groupId);
 
       // Bob adopts the anchored member set without joining, so both
