@@ -801,8 +801,18 @@ finished and published.
 ### Deferred (non-blocking)
 - [ ] Relay transport encryption (~1 day) — closes the browser confidentiality gap
 - [ ] CRDT operation authenticity — design note, then RFC amendment
-- [ ] Message content encryption at rest — needs a granularity decision and
-      WAL handling; measure before choosing
+- [ ] Message content encryption at rest — `recordLocally` writes
+      `content` into the document in the clear, and `storageKey` protects
+      identity secrets only. Confirmed still true against 0.4.0.
+      **Deferred deliberately, 2026-08-23.** There are no real users, so
+      the two questions that were blocking it are not constraints:
+      existing unencrypted databases can simply be discarded rather than
+      migrated, and `storageKey` may become mandatory without stranding
+      anyone. Whoever picks this up should not re-derive that — it was
+      decided, not overlooked.
+      Scope: encrypt snapshots on write in `DocumentStore` /
+      `MessageStore`, decrypt on read. Sync is unaffected, since it
+      operates on the in-memory document.
 - [ ] OS-keychain integration for identity secrets (RFC 004 §4.1) — explicitly
       deferred to v1.1; SQLite with encryption at rest is sufficient for v1
 - [ ] Native prover (rapidsnark) — WASM proving is ~1s per anonymous message
