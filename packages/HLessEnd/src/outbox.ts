@@ -1,7 +1,7 @@
 /**
  * @dicsussion/sdk — OutboxManager
  *
- * Offline message queue per RFC 004 §7.4. Messages sent while the node
+ * Offline message queue per RFC 004 §7.5. Messages sent while the node
  * is disconnected are queued locally, persisted to SQLite so they
  * survive a restart, and flushed automatically on reconnection.
  *

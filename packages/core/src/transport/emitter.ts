@@ -85,7 +85,7 @@ export class Emitter<Events extends Record<string, unknown[]> = Record<string, u
    * Accepted for source compatibility with `node:events`.
    *
    * There is no listener ceiling here — the SDK enforces its own caps
-   * where RFC 004 §7.4 requires them, which is the limit that actually
+   * where RFC 004 §7.5 requires them, which is the limit that actually
    * matters.
    */
   setMaxListeners(_count: number): this {

@@ -3,7 +3,7 @@
 - **Target Module:** `packages/core`
 - **Status:** Draft
 - **Authors:** Parth
-- **Last Updated:** 2026-08-18
+- **Last Updated:** 2026-08-23
 
 ---
 
@@ -33,6 +33,9 @@ Every document MUST conform to a registered schema structure:
         "title": "General Chat",
         "created_at": 1785148000
       },
+      "participants": {
+        "did:key:z6Mk...": { "did": "did:key:z6Mk...", "added_at": 1785148000 }
+      },
       "messages": {
         "msg-uuid-1": {
           "id": "msg-uuid-1",
@@ -48,6 +51,50 @@ Every document MUST conform to a registered schema structure:
     }
 
 `author_did` MAY be `null` when `nullifier_hash` is present for anonymous RLN channels. Received messages MUST persist the serialized Groth16 proof (`zk_proof`) and RLN nullifier (`rln_nullifier`) locally for offline dispute resolution.
+
+---
+
+### 3.2 Deterministic Genesis
+
+**Every replica of a document MUST begin from byte-identical genesis
+derived from its `doc_id`.** A replica that instead *creates* the
+document locally has a root history of its own, and merging two such
+histories is a conflict over the container: the `messages` map was
+assigned concurrently in each, one assignment wins, and every message
+written into the loser disappears from the merged document.
+
+The failure is silent and permanent. The winner is deterministic, so all
+replicas converge on the same truncated document; their state roots then
+agree, and §4 reports them in sync forever after. The lost operations
+remain in history but are unreachable.
+
+Genesis MUST therefore contain only values derived from `doc_id`, minted
+under a fixed actor and a fixed timestamp:
+
+- A per-node actor produces per-node operation ids, hence a per-node root.
+- A wall-clock timestamp is worse, because it fails *intermittently*: two
+  nodes minting genesis in the same millisecond agree and any other pair
+  does not, surfacing as a duplicate-sequence rejection on merge.
+
+Anything varying per node — a title, a creation time — MUST be applied as
+a change *after* genesis, where it merges as an ordinary
+last-write-wins scalar rather than forking the root.
+
+### 3.3 Participants
+
+`participants` is an authorization boundary, not metadata. A document
+MUST be synchronised only with peers named in it, in both directions:
+refusing to offer it, and refusing to adopt it when pushed. **A document
+with no participants MUST NOT be shared with anyone.**
+
+Being paired is not sufficient. Pairing (RFC 001 §3.3) authorises a peer
+to hold a session, not to receive every conversation a node happens to
+store — and an implementation that conflates them discloses each contact's
+history to every other contact, backdated to before they were added.
+
+The list lives inside the document so it survives device replacement
+alongside the history it governs, at the cost of being readable by
+everyone legitimately holding that document.
 
 ---
 
@@ -98,6 +145,38 @@ To prevent unbounded CRDT history bloat over extended chat operation:
 1. **Periodic Checkpointing:** Every 1,000 document changes or 7 days, nodes MUST generate a compressed binary snapshot of the active Automerge document state (`automerge.save()`).
 2. **Delta Pruning:** Local stores MAY discard raw historical change deltas older than the latest canonical snapshot, retaining only the head state hash and active leaf nodes for state reconciliation.
 3. **Channel Archival:** Inactive channels (no messages exchanged within 30 days) are evicted from the active Merkle state tree into content-addressed blob storage on Iroh, releasing hot SQLite/IndexedDB memory paths.
+
+---
+
+### 4.5 Continuous Reconciliation
+
+Reconciling once per connection is **not sufficient**. A node MUST push a
+document to eligible peers whenever it changes locally, including when
+the change merely arrived from another peer.
+
+Without onward relay, a message reaches only peers the sender is directly
+connected to. Three participants in a star — two outer nodes each
+connected to a middle one, and not to each other — then hold three
+different conversations indefinitely: the middle node sees everything and
+each outer node sees half, with nothing to indicate a split. Groups are
+rarely a full mesh in practice, so this is the normal case rather than an
+edge one.
+
+Relaying is self-limiting: once a peer is up to date the sync protocol
+yields no message, so propagation terminates without extra bookkeeping.
+
+**A message may consequently arrive twice** — once as a Stream `0x02`
+envelope and again inside a relayed document. Both deliveries are
+legitimate. An implementation MUST surface it to the application once,
+de-duplicated by message id, or a group displays every message as many
+times as there are paths to it.
+
+Implementations MUST also distinguish *"present when this replica first
+observed the channel"* from *"already delivered to the application"*.
+The first prevents replaying stored history as new arrivals after a
+restart; the second prevents double delivery. Conflating them suppresses
+the first message on every channel, because seeding the one marks
+messages delivered before anything delivered them.
 
 ---
 

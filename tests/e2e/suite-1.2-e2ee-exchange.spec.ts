@@ -6,7 +6,7 @@
  *   - ciphertext on Stream 0x02 leaks neither plaintext nor channel id
  *   - a wrong key cannot decrypt the envelope
  *   - messages sent while offline queue in the outbox and flush on
- *     simulated network reconnection (RFC 004 §7.4)
+ *     simulated network reconnection (RFC 004 §7.5)
  *   - Automerge state converges across the two peers (RFC 002 §4.2)
  */
 

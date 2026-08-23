@@ -51,18 +51,27 @@ bob.chat.onMessage('general', (message) => {
   console.log(message.content); // "hello"
 });
 
-// Pairing — both directions. See section 3.
+// 1. Pairing — both directions. See section 3.
 alice.addPeer(bob.did, bob.encryptionPublicKey);
 bob.addPeer(alice.did, alice.encryptionPublicKey);
 
-// Dial — one direction only.
+// 2. Say who the conversation is for. See section 4.
+alice.chat.createChannel('general', [bob.did]);
+bob.chat.createChannel('general', [alice.did]);
+
+// 3. Dial — one direction only.
 await alice.connect(bob.getTicket());
 
 await alice.chat.sendMessage({ channelId: 'general', content: 'hello' });
 ```
 
+**Three steps, and all three are load-bearing.** Pairing says who a peer
+is. The channel says which conversations they belong to. Dialling opens
+the connection. Skip the middle one and the message goes nowhere — see
+the next two sections for why each exists.
+
 `init()` defaults to the in-process `local` transport, which needs no
-native module and no network. Section 5 covers real ones.
+native module and no network. Section 7 covers real ones.
 
 ---
 
@@ -131,7 +140,86 @@ they arrived.
 
 ---
 
-## 4. Tickets are not ready the instant you have one
+## 4. Every conversation has a guest list
+
+**Pairing is not the same as belonging to a conversation.**
+
+Pairing means "I know who you are and I'm willing to talk to you". It
+says nothing about *which* conversations you are part of. A conversation
+keeps its own list of participants, and a message is only sent to — and
+only synchronised with — the people on it.
+
+```ts
+client.chat.createChannel('alice+bob', [bobDid]);
+// or, on the first message:
+await client.chat.sendMessage({
+  channelId: 'alice+bob',
+  content: 'hello',
+  participants: [bobDid],
+});
+```
+
+The local node is always included; you name everyone else.
+
+**A conversation with nobody on the list is shared with nobody.** That is
+deliberate, and it is the one behaviour most likely to surprise you: a
+`sendMessage` to an undeclared channel succeeds, appears in your own
+history, and reaches no one. It queues in the outbox rather than being
+lost, but nothing will deliver it until the channel has participants.
+
+The reason is that the SDK cannot work out who a conversation is for.
+Only your application knows that a chat opened from Bob's contact card
+is for Bob. An earlier version of this guessed — it shared new
+conversations with everyone you were paired with — and the result was
+that adding a second contact handed them the first one's history. So it
+does not guess.
+
+### Adding someone later
+
+Pairing a peer after a conversation exists does **not** admit them to it.
+Call `createChannel` again with their `did:key`; it is idempotent and
+keeps everyone already on the list.
+
+```ts
+client.addPeer(carol.did, carol.encryptionPublicKey); // now a contact
+client.chat.createChannel('the-group', [carol.did]);  // now in this chat
+```
+
+They receive the conversation from that point, including its history —
+so admit people deliberately rather than as a side effect of pairing.
+
+---
+
+## 5. Groups, and how messages travel
+
+A group is a conversation with more than two people on its guest list.
+There is no separate group type for ordinary chat.
+
+**Messages do not only travel directly.** Each participant relays what
+they receive onward to the others, so a message reaches people the
+sender has no connection to. If Alice and Carol are both connected to
+Bob but not to each other, Alice's message still reaches Carol.
+
+That matters because a group is rarely a full mesh in practice — phones
+come and go, and NAT traversal fails for some pairs. Convergence does
+not depend on everyone being reachable at once.
+
+**Everyone sees the same conversation in the same order.** Order is
+computed identically on every device from the messages themselves —
+timestamp, then position, then id — so nobody is in charge and no
+central server decides. Two people scrolling the same group see the same
+thread.
+
+**Simultaneous messages all survive.** Each message occupies its own slot
+keyed by its id, so two people typing at the same moment cannot overwrite
+one another. This is the property a CRDT is chosen for.
+
+A message may reach a device twice — directly and again via a relay. The
+SDK tells your application once.
+
+---
+
+## 6. Tickets are not ready the instant you have one
 
 A ticket carries the addresses a peer will dial. Discovery is not
 instant: the socket binds immediately, but a public address arrives from
@@ -160,7 +248,7 @@ derpRelay:       "https://euc1-1.relay.n0.iroh.link./"
 
 ---
 
-## 5. Choosing storage and transport
+## 7. Choosing storage and transport
 
 Both are chosen for the host you are running in. Getting either wrong
 fails at startup, loudly, which is the easy case.
@@ -216,7 +304,7 @@ Writing `pipe` is covered in
 
 ---
 
-## 6. Sending and receiving
+## 8. Sending and receiving
 
 ```ts
 await client.chat.sendMessage({ channelId: 'general', content: 'hello' });
@@ -239,7 +327,7 @@ reconnect. A resolved `sendMessage` means *accepted locally*, not
 
 ---
 
-## 7. What this does not do yet
+## 9. What this does not do yet
 
 Stated plainly, because the alternative is you finding out later.
 
@@ -265,7 +353,7 @@ Identity recovery *is* supported: `identity.exportMnemonic()` and
 
 ---
 
-## 8. Further reading
+## 10. Further reading
 
 - [`packages/HLessEnd/README.md`](packages/HLessEnd/README.md) — SDK
 - [`packages/core/README.md`](packages/core/README.md) — engine, custom transports

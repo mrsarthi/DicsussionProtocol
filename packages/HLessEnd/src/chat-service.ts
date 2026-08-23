@@ -2,7 +2,7 @@
  * @dicsussion/sdk — ChatService
  *
  * Message sending, receiving, and history access.
- * Per-channel listener cap of 64 per RFC 004 §7.4.
+ * Per-channel listener cap of 64 per RFC 004 §7.5.
  *
  * The service is constructed bare and wired later via `attach()`, so it
  * can be exercised in isolation without standing up transport, storage,
@@ -19,7 +19,7 @@ import { currentEpoch } from './outbox.js';
 import type { WireProof } from './proof-service.js';
 import type { SdkChatMessage, SendMessageOptions } from './types.js';
 
-/** Maximum listeners per channel (RFC 004 §7.4). */
+/** Maximum listeners per channel (RFC 004 §7.5). */
 const MAX_LISTENERS_PER_CHANNEL = 64;
 
 type MessageCallback = (msg: SdkChatMessage) => void;
@@ -151,7 +151,7 @@ export class ChatService {
    * The message is written to the channel's CRDT document immediately so
    * local state is correct whether or not the network is reachable. If
    * the node is offline the ciphertext is queued in the outbox and
-   * flushed on reconnection (RFC 004 §7.4).
+   * flushed on reconnection (RFC 004 §7.5).
    */
   async sendMessage(options: SendMessageOptions): Promise<SdkChatMessage> {
     const deps = this.requireDeps();
@@ -310,7 +310,7 @@ export class ChatService {
 
   /**
    * Register a callback for incoming messages on a channel.
-   * Enforces MAX_LISTENERS_PER_CHANNEL per RFC 004 §7.4.
+   * Enforces MAX_LISTENERS_PER_CHANNEL per RFC 004 §7.5.
    *
    * @returns Unsubscribe function.
    */

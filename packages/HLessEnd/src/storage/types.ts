@@ -86,7 +86,7 @@ export interface MessageRecord {
   readonly envelopeRef?: string;
 }
 
-/** RFC 004 §7.4 — Offline outbox entry. */
+/** RFC 004 §7.5 — Offline outbox entry. */
 export interface OutboxEntry {
   readonly id: string;
   readonly channelId: string;

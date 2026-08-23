@@ -25,15 +25,21 @@ const bob = await DicsussionClient.init({ storagePath: ':memory:' });
 
 bob.chat.onMessage('general', (message) => console.log(message.content));
 
-// Pair both ways.
+// 1. Pair, both ways — who each other is.
 alice.addPeer(bob.did, bob.encryptionPublicKey);
 bob.addPeer(alice.did, alice.encryptionPublicKey);
 
-// Dial once.
+// 2. Say who the conversation is for.
+alice.chat.createChannel('general', [bob.did]);
+bob.chat.createChannel('general', [alice.did]);
+
+// 3. Dial, once.
 await alice.connect(bob.getTicket());
 
 await alice.chat.sendMessage({ channelId: 'general', content: 'hello' });
 ```
+
+All three steps matter. Skip the second and the message reaches nobody.
 
 ---
 
@@ -75,6 +81,44 @@ client.onPeerConnected.on('peer', ({ peerDid, paired, direction }) => {
 ```
 
 ---
+
+## Conversations have a guest list
+
+Pairing says who a peer *is*. It does not say which conversations they
+belong to — that is a separate list, kept per conversation, and a message
+goes only to the people on it.
+
+```ts
+client.chat.createChannel('alice+bob', [bobDid]);
+// or when sending the first message:
+await client.chat.sendMessage({
+  channelId: 'alice+bob',
+  content: 'hello',
+  participants: [bobDid],
+});
+```
+
+**A channel with nobody on the list is shared with nobody.** The send
+succeeds, appears in your own history, and queues — but nothing delivers
+it. The SDK cannot infer who a conversation is for; only your application
+knows that a chat opened from Bob's contact card is for Bob. Guessing is
+how a contact ends up holding conversations they were never part of.
+
+Pairing someone *later* does not admit them to existing conversations.
+Call `createChannel` again — it is idempotent and keeps the current list.
+
+## Groups
+
+A group is a conversation with more than two people on its list; there is
+no separate type.
+
+Participants relay what they receive onward, so a message reaches people
+the sender has no connection to — a group need not be a full mesh to
+converge. Every device computes the same order from the messages
+themselves, so everyone sees the same thread, and simultaneous messages
+all survive because each occupies its own slot.
+
+A message may arrive twice, directly and via a relay. You are told once.
 
 ## Storage and transport are chosen for the host
 
@@ -122,6 +166,7 @@ for writing the `pipe`.
 ```ts
 client.did                       // did:key:z6Mk…
 client.encryptionPublicKey       // X25519 public key
+client.chat.createChannel(channelId, [theirDid])
 client.getTicket()               // PeerTicket — see the ticket note below
 client.addPeer(did, key)
 await client.connect(ticket)

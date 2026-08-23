@@ -675,18 +675,103 @@ history as new. That is a bug I would have shipped.
 
 ---
 
-## Current State (2026-08-21)
+## Task: 0.4.0 — group messaging, and conversations that stay private
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-23
+
+Three defects in how conversations are stored, shared and propagated.
+Two were reported by the EchoIt agent from observed behaviour; the third
+was found by testing the answer to "how do group messages work", which
+turned out to be "they do not".
+
+### 1. Contacts could read each other's conversations
+Every conversation a node held was offered to any paired peer, in
+readable text, backdated. Reproduced: Alice talks to Bob, later pairs
+Carol, and Carol ends up holding the message to Bob. Strangers were
+unaffected — the boundary that failed was between people you trust.
+
+**Two paths, not one.** Synchronisation offered every document to any
+paired peer. Separately, `publish` fanned every message out to every
+paired peer whatever channel it belonged to, and that one delivered the
+message before sync even ran. The report named only the first.
+
+- [x] Conversations carry a `participants` list; both paths consult it,
+      both default to refusing.
+- [x] The list lives in the document, so it survives device replacement
+      alongside the history it governs.
+
+**The first fix was wrong and its own test caught it.** Defaulting to
+"everyone currently paired" recreated the leak for anyone with two
+contacts. The SDK cannot infer who a conversation is for — only the
+application knows a chat opened from Bob's card is for Bob — so it does
+not guess, and callers declare membership.
+
+### 2. Concurrent messages were silently deleted
+Each node created its own copy of a channel, so merging contested the
+container rather than the contents: one `messages` map won and the
+others' contents vanished. Deterministic, so every replica converged on
+the same truncated document, state roots then matched, and sync reported
+success forever after.
+
+- [x] Both creation paths start from byte-identical genesis derived from
+      the docId.
+- [x] Genesis pins the actor *and* the clock. `Automerge.from` stamps
+      `Date.now()`, so two nodes minting a millisecond apart produced
+      different bytes under the same actor and sequence — an
+      intermittent duplicate-seq rejection that failed one run in five.
+
+### 3. Groups did not work
+Reconciliation ran once per connection, so nothing travelled beyond
+directly connected peers. Three in a star held three different
+conversations, permanently.
+
+- [x] Local changes are relayed onward, including changes that arrived
+      from elsewhere. Self-limiting: an up-to-date peer yields no sync
+      message.
+- [x] Emission is idempotent per message id, since a message can now
+      arrive directly *and* relayed.
+- [x] "Present when first observed" and "delivered to the application"
+      are stored separately. Conflating them suppressed the first
+      message on every channel, because seeding one marked messages
+      delivered before anything delivered them.
+
+### Cost
+The membership requirement broke 32 tests that assumed a message goes to
+everyone you are paired with. All migrated; pairing and membership are
+now distinct gates and the suites assert the gap rather than assuming it.
+
+### Also fixed
+- The dialer reused a recycled connection id without resetting — the
+  mirror of a bug already fixed on the accepting side, surfacing as a
+  nonsense control-message length rather than as reuse.
+- A node's own messages appeared to arrive from outside on first sync.
+- One cross-process assertion removed with its reasoning: `goOffline`
+  suppresses the outbox, it does not sever the connection, so an
+  in-flight reconciliation may legitimately carry messages before the
+  flush. That assumption only held while sync was failing to converge.
+
+### Method note
+Every one of these was found by running something, not by reading. The
+leak, the deletion and the star-topology split were all reproduced before
+being diagnosed, and two of the three fixes were wrong on the first
+attempt in ways only a test revealed. `macco` located the genesis cause
+after three readings of the sync path found nothing, because the defect
+was one layer earlier than the symptom.
+
+---
+
+## Current State (2026-08-23)
 
 | | |
 |---|---|
-| Version | **0.3.2**, both packages |
-| Tests | **536 passing, 0 failing** |
+| Version | **0.4.0**, both packages |
+| Tests | **546 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | **yes** — npm, tagged, GitHub release cut |
+| Published | 0.3.2 on npm; **0.4.0 pending** |
 | Docs | `HOW_TO_USE.md` + a README on each package |
 
 **Test suites:** 11 e2e, 14 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT, plus

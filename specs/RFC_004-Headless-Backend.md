@@ -3,7 +3,7 @@
 - **Target Module:** `@dicsussion/sdk` (`packages/HLessEnd`)
 - **Status:** Draft
 - **Author:** Parth
-- **Last Updated:** 2026-08-18
+- **Last Updated:** 2026-08-23
 
 ---
 
@@ -229,6 +229,14 @@ export class DicsussionClient {
 
   /** Register a peer's X25519 key, learned out of band. */
   addPeer(did: string, encryptionKey: Uint8Array): void;
+
+  /**
+   * Declare a conversation and who belongs to it.
+   *
+   * Separate from `addPeer` on purpose: pairing authorises a peer,
+   * membership authorises a conversation. See §7.4.
+   */
+  chat.createChannel(channelId: string, participants?: readonly string[]): void;
   connect(ticket: PeerTicket): Promise<IConnection>;
   getTicket(): PeerTicket;
   getNetworkStatus(): NetworkStatus;
@@ -354,7 +362,43 @@ export class IdentityService {
 }
 ```
 
-### 7.4 Offline Queue & Listener Safety
+### 7.4 Conversation Membership
+
+**A conversation carries its own participant list, and it is an
+authorization boundary.** Messages are transmitted only to peers named in
+it, and RFC 002 §3.3 requires the same of synchronisation. A conversation
+naming nobody reaches nobody.
+
+An implementation MUST NOT infer membership. Pairing cannot supply it —
+being a contact says nothing about which conversations a peer belongs to
+— and defaulting to "everyone currently paired" reproduces exactly the
+disclosure the list exists to prevent, as soon as a user has two
+contacts. Only the application knows that a chat opened from a given
+contact is for that contact, so the application declares it:
+
+```typescript
+client.chat.createChannel(channelId, [theirDid]);
+// or, on the first message that creates the channel:
+client.chat.sendMessage({ channelId, content, participants: [theirDid] });
+```
+
+The local node is always a participant. Admission is idempotent and
+additive, so a peer paired *later* is admitted by an explicit call rather
+than as a side effect of pairing.
+
+**Consequences an implementation MUST accept.** A send to an undeclared
+channel succeeds locally, is recorded in history, queues in the outbox,
+and is delivered to nobody. This is preferable to the alternative:
+undeclared membership that defaults to sharing is a silent disclosure,
+whereas undeclared membership that defaults to refusing is a visible
+absence of delivery.
+
+A group is a conversation with more than two participants. No separate
+group type exists for ordinary chat.
+
+---
+
+### 7.5 Offline Queue & Listener Safety
 The backend MUST define an offline outbox queue for pending messages and reconnect state. Each outbox entry SHOULD include status and timestamps so stale proofs can be re-generated when the client reconnects. In addition, `ChatService.onMessage()` MUST enforce a per-channel listener cap and clean up listeners when channels are destroyed.
 
 ```typescript
@@ -397,6 +441,18 @@ Consequently:
    it twice. This is what makes queue-on-failure safe when a fan-out
    partially succeeded.
 
+#### Delivery scope
+
+Publishing MUST be scoped to the conversation, not to the peer set. A
+node typically holds sessions with peers belonging to different
+conversations, and fanning a message out to every paired peer discloses
+each conversation to all of them — independently of, and in addition to,
+any leak through synchronisation.
+
+`publish` MUST report how many peers it reached. Fanning out to an empty
+set otherwise resolves exactly as a successful send does, so a message
+with no eligible recipient is marked delivered and never queued.
+
 #### Liveness
 
 A peer registry MUST determine liveness from connection **state**, never
@@ -418,7 +474,7 @@ in **both** directions — whether this node dialled the peer or the peer
 dialled it. A flush that fails MUST leave entries queued for the next
 attempt and MUST NOT turn a successful connection into a failed one.
 
-### 7.5 Voucher Record Schema
+### 7.6 Voucher Record Schema
 The local voucher store MUST persist a concrete voucher record schema so redeemed vouchers can be deduplicated and garbage-collected safely.
 
 ```typescript
