@@ -106,7 +106,21 @@ To minimize mobile battery drain and cellular bandwidth, peers compare a single 
 1. Each document's current state is represented by its 32-byte Automerge Head Hash (`head_hash`).
 2. Active identity commitments are collected, sorted lexicographically, and mapped to a bounded sparse tree index $\text{Index}(cm_x) = \text{Rank}(cm_x \in \text{Sorted}(cm_1, cm_2, \dots))$.
 3. The tree is a **Bounded Sparse Merkle Tree** of depth $D = 16$ with Poseidon path elements and a maximum active commitment set size $N_{\text{max}} = 65{,}536$.
-4. When $N = 65{,}536$, nodes MUST evict the oldest inactive commitment using an LRU frame and replace it with a tombstone leaf $cm_{\text{empty}} = 0$.
+4. At capacity, nodes MUST evict deterministically — the **lowest occupied
+   leaf index** — and replace it with a tombstone leaf $cm_{\text{empty}} = 0$.
+
+   **Not LRU**, despite earlier revisions of this document specifying it.
+   The root must be a pure function of committed state, and last-activity
+   is a local observation that is never committed: two nodes holding
+   identical membership would evict different leaves and compute
+   different roots, so the tree would stop converging exactly when it
+   filled up. Determinism here is a correctness requirement, not a
+   simplification.
+
+   Depth 16 admits 65,536 leaves, but implementations SHOULD apply a
+   lower working cap — the reference implementation uses **4,096** —
+   because a rebuild is O(N·D) and the full depth is impractical on
+   mobile hardware.
 5. Poseidon hashing is used for path elements and the resulting root is the canonical state root for the document set.
 
 ### 4.2 Sync Sequence (Sub-Stream `0x01`)

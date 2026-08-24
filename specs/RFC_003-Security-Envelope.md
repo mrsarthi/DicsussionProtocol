@@ -44,6 +44,8 @@ To prevent cross-protocol collision attacks, scalar inputs MUST use explicit Pos
 - $DS_{\text{voucher}} = 4$: Blind endorsement voucher redemption nullifier ($\nu$).
 - $DS_{\text{issue}} = 5$: Issuer allocation nullifier ($\text{nullifier}_{\text{issue}}$).
 - $DS_{\text{member}} = 6$: Membership commitment derivation.
+- $DS_{\text{root}} = 7$: Versioned membership root binding (RFC 002 §4.1).
+- $DS_{\text{trapdoor}} = 8$: Identity trapdoor derivation (§7.1).
 
 ### 3.2 Trust Tiers & Quota Allocation
 
@@ -52,7 +54,7 @@ To prevent cross-protocol collision attacks, scalar inputs MUST use explicit Pos
 | **Tier 0 (Untrusted)** | $0 \le \text{Score} < 50$ | 1 msg / 10s | Restricted |
 | **Tier 1 (Standard)** | $50 \le \text{Score} < 100$ | 3 msgs / 10s | Baseline |
 | **Tier 2 (Established)** | $100 \le \text{Score} < 200$ | 10 msgs / 10s | Fast |
-| **Tier 3 (High Reputation)**| $\text{Score} \ge 200$ | Unrestricted / High Quota | Full Access |
+| **Tier 3 (High Reputation)**| $\text{Score} \ge 200$ | 100 messages / epoch | Full Access |
 
 The reputation tier proof MUST be bound to a fresh state root and a recent epoch. Verification MUST reject proofs older than 2 epochs (20 seconds) unless the proof explicitly includes the current state root hash and epoch.
 

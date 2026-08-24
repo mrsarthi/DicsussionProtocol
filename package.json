@@ -1,6 +1,6 @@
 {
   "name": "@dicsussion/protocol",
-  "version": "0.0.1",
+  "version": "0.5.0",
   "private": true,
   "description": "Headless, local-first, zero-knowledge P2P messaging protocol engine and SDK",
   "type": "module",
@@ -22,6 +22,7 @@
     "@types/node": "^22.20.1",
     "@types/uuid": "^10.0.0",
     "circom2": "^0.2.23",
+    "snarkjs": "^0.7.6",
     "circomlib": "^2.0.5",
     "esbuild": "^0.25.0",
     "fake-indexeddb": "^6.2.5",
@@ -40,7 +41,6 @@
     "lz4js": "^0.2.0",
     "multiformats": "^14.0.5",
     "poseidon-lite": "^0.3.0",
-    "snarkjs": "^0.7.6",
     "uuid": "^14.0.1"
   },
   "overrides": {

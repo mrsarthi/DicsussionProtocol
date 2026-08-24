@@ -21,13 +21,24 @@
  * rejoining means presenting a fresh one. Revocations for misconduct are
  * separate and arrive on Stream `0x03`.
  *
- * KNOWN LIMITATION — LRU divergence at capacity. `BoundedMembershipTree`
- * evicts by `lastActive`, which is a *local* observation. Below N_max
- * (65,536) nothing is ever evicted and roots agree. At capacity two
- * peers could evict different members and fork the root. The fix is to
- * derive activity from a globally observable event — the last epoch a
- * member published an RLN signal — rather than local wall-clock. Not yet
- * implemented; see PROGRESS.md.
+ * EVICTION AT CAPACITY. `BoundedMembershipTree` evicts the lowest
+ * occupied leaf index, not the least recently used one.
+ *
+ * That is deliberate and it is what makes roots agree. Last-activity is
+ * a *local* observation and is never committed, so two peers holding
+ * identical membership would evict different members and fork the root —
+ * at exactly the moment the tree filled up, which is the worst time for
+ * a channel to stop converging. A deterministic rule keeps the root a
+ * pure function of committed state.
+ *
+ * The cost is that eviction is arbitrary with respect to activity: a
+ * long-dormant member at a high index outlives an active one at a low
+ * index. Deriving activity from something globally observable — the last
+ * epoch a member published an RLN signal — would allow a fairer rule
+ * without giving up determinism. Not implemented; see PROGRESS.md.
+ *
+ * Capacity is `DEFAULT_MAX_MEMBERS` (4,096), well below the 65,536 the
+ * depth-16 tree could hold, because a rebuild is O(N·D).
  */
 
 import { compareFieldBytes } from '../crypto/field.js';

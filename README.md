@@ -19,7 +19,7 @@
 > **v0.5.0 — read this before depending on it.**
 >
 > The Groth16 proving key is the output of a **completed six-party trusted
-> setup**, closed with a Bitcoin block hash committed to publicly three days
+> setup**, closed with a Bitcoin block hash committed to publicly two days
 > before that block was mined. Every contribution hash, the beacon, and a full
 > verification transcript are published at
 > [Ceremonial-Contributions](https://github.com/mrsarthi/Ceremonial-Contributions)
@@ -183,7 +183,7 @@ The protocol is defined by four RFCs that cover the full stack from wire transpo
 Peer-to-peer QUIC transport, `did:key` addressing, mDNS local discovery, NAT traversal via Iroh STUN hole-punching, and DERP relay fallback. Defines the 12-byte wire frame header and six multiplexed sub-stream types (`0x01`–`0x06`).
 
 ### [RFC 002 — Data Sync & Schema Lenses](specs/RFC_002-Data-Sync.md)
-Multi-document Automerge CRDT architecture, Bounded Sparse Merkle Tree (depth 16, max 65,536 identities) with Poseidon hashing and LRU eviction, and declarative JSON Schema Lenses for cross-version compatibility.
+Multi-document Automerge CRDT architecture, Bounded Sparse Merkle Tree (depth 16, so 65,536 leaves — but the working cap is **4,096 members per channel**, because rebuild cost is O(N·D)) with Poseidon hashing and deterministic lowest-index eviction, and declarative JSON Schema Lenses for cross-version compatibility.
 
 ### [RFC 003 — Security Envelope & ZK-RLN](specs/RFC_003-Security-Envelope.md)
 Unified Groth16 single-proof envelope combining ZK range proofs (reputation ≥ threshold) with ZK-RLN rate-limiting. Tiered quota allocation, Poseidon domain separation, Chaumian blind endorsement vouchers, and cryptographic slashing via Lagrange secret reconstruction.
@@ -211,7 +211,7 @@ Traditional platforms moderate spam with centralized servers and phone number ve
 | Tier 0 (Untrusted) | 0–49 POC | 1 |
 | Tier 1 (Standard) | 50–99 POC | 3 |
 | Tier 2 (Established) | 100–199 POC | 10 |
-| Tier 3 (High Rep) | ≥200 POC | Unrestricted |
+| Tier 3 (High Rep) | ≥200 POC | 100 msgs/epoch |
 
 The slashing is **automatic and trustless** — no moderator votes, no appeals, just math.
 
@@ -270,7 +270,7 @@ npm install
 
 ```bash
 npm run build       # compile both packages
-npm test            # 464 Playwright tests
+npm test            # 552 Playwright tests
 npm run typecheck   # tsc --noEmit
 ```
 
@@ -320,6 +320,11 @@ bob.chat.onMessage('general', (msg) => {
 // everything. A handshake proves key ownership, not that you know them.
 alice.addPeer(bob.did, bob.encryptionPublicKey);
 bob.addPeer(alice.did, alice.encryptionPublicKey);
+
+// Pairing says who someone IS; the channel says which conversations they
+// are in. Both are required — without this the message reaches nobody.
+alice.chat.createChannel('general', [bob.did]);
+bob.chat.createChannel('general', [alice.did]);
 
 // Dialling, by contrast, happens once.
 await alice.connect(bob.getTicket());
