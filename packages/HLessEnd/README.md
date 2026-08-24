@@ -104,8 +104,16 @@ it. The SDK cannot infer who a conversation is for; only your application
 knows that a chat opened from Bob's contact card is for Bob. Guessing is
 how a contact ends up holding conversations they were never part of.
 
-Pairing someone *later* does not admit them to existing conversations.
-Call `createChannel` again — it is idempotent and keeps the current list.
+`createChannel` states the **whole** membership — anyone not named is
+removed. A conversation can also be created by an inbound message, which
+records its sender, so an additive reading would let a peer who guessed
+the channel id stay in it. Channel ids are identifiers, not secrets.
+
+To admit someone to a conversation that already exists:
+
+```ts
+client.chat.addParticipant('the-group', theirDid);
+```
 
 To remove someone:
 
@@ -178,6 +186,7 @@ for writing the `pipe`.
 client.did                       // did:key:z6Mk…
 client.encryptionPublicKey       // X25519 public key
 client.chat.createChannel(channelId, [theirDid])
+client.chat.addParticipant(channelId, theirDid)
 client.chat.removeParticipant(channelId, theirDid)
 client.getTicket()               // PeerTicket — see the ticket note below
 client.addPeer(did, key)

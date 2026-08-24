@@ -40,13 +40,19 @@ async function createMesh(): Promise<{
 
   // Out-of-band pairing across the full mesh.
   for (const self of nodes) {
-    for (const other of nodes) {
-      if (self !== other) {
-        self.addPeer(other.did, other.encryptionPublicKey);
-        for (const channel of ['anon', 'general', 'mixed']) {
-          self.chat.createChannel(channel, [other.did]);
-        }
-      }
+    const others = nodes.filter((node) => node !== self);
+
+    for (const other of others) {
+      self.addPeer(other.did, other.encryptionPublicKey);
+    }
+
+    // One declaration naming everyone. `createChannel` states the whole
+    // membership, so calling it per peer would leave only the last.
+    for (const channel of ['anon', 'general', 'mixed']) {
+      self.chat.createChannel(
+        channel,
+        others.map((node) => node.did),
+      );
     }
   }
 

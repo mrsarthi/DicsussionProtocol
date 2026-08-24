@@ -185,13 +185,17 @@ export class PeerMesh {
       for (const other of peers) {
         if (self === other) continue;
         await self.call('addPeer', { did: other.did, key: other.encryptionKey });
-        // Pairing authorises the peer; the channel admits them. Both are
-        // required, and a real application does both too.
-        await self.call('createChannel', {
-          channelId: 'general',
-          participants: [other.did],
-        });
       }
+    }
+
+    // Pairing authorises each peer; one declaration names the whole
+    // conversation. `createChannel` states membership rather than adding
+    // to it, so a call per peer would leave only the last one in.
+    for (const self of peers) {
+      await self.call('createChannel', {
+        channelId: 'general',
+        participants: peers.filter((p) => p !== self).map((p) => p.did),
+      });
     }
 
     // One connection per pair — dialling both ways would double up.

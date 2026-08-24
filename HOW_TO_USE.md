@@ -174,11 +174,24 @@ conversations with everyone you were paired with — and the result was
 that adding a second contact handed them the first one's history. So it
 does not guess.
 
+**`createChannel` states the whole membership.** Anyone recorded and not
+named is removed. That is deliberate: a conversation can also come into
+existence from an inbound message, which records its sender — so if
+declaring "this chat is for Bob" merely *added* Bob, a peer who had
+already written itself in by guessing the channel id would stay, and
+receive everything sent afterwards. Channel ids travel in the clear and
+are identifiers, not secrets.
+
 ### Adding someone later
 
 Pairing a peer after a conversation exists does **not** admit them to it.
-Call `createChannel` again with their `did:key`; it is idempotent and
-keeps everyone already on the list.
+
+```ts
+client.chat.addParticipant('the-group', theirDid);
+```
+
+Use `addParticipant` rather than re-declaring with `createChannel`, which
+would remove everyone you did not repeat.
 
 ```ts
 client.addPeer(carol.did, carol.encryptionPublicKey); // now a contact

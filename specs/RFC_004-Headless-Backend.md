@@ -382,9 +382,27 @@ client.chat.createChannel(channelId, [theirDid]);
 client.chat.sendMessage({ channelId, content, participants: [theirDid] });
 ```
 
-The local node is always a participant. Admission is idempotent and
-additive, so a peer paired *later* is admitted by an explicit call rather
-than as a side effect of pairing.
+The local node is always a participant. A peer paired *later* is admitted
+by an explicit call rather than as a side effect of pairing.
+
+**Declaring a conversation MUST be authoritative, not additive.** Anyone
+recorded and not named MUST be removed, and a separate operation MUST
+exist for admitting someone to a conversation that already exists.
+
+This is a security requirement rather than an ergonomic preference.
+Channel identifiers are chosen by applications and travel in the clear;
+they are identifiers, not secrets. A conversation may also come into
+existence from an inbound message, and doing so records its sender — so
+under additive semantics a peer could name the identifier of a
+conversation it had no part in, be recorded as a participant, and receive
+everything sent there afterwards, including messages the sender believed
+were private to a third party. Authoritative declaration is what makes
+naming a conversation decide who is in it.
+
+**Inference of membership MUST be confined to the creation of a
+conversation in response to an inbound message**, where it records that
+message's author so a reply has somewhere to go. An implementation MUST
+NOT infer membership on a conversation it already holds.
 
 **Consequences an implementation MUST accept.** A send to an undeclared
 channel succeeds locally, is recorded in history, queues in the outbox,

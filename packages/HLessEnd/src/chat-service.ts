@@ -139,10 +139,41 @@ export class ChatService {
       deps.documents.createDocument(channelId, channelId);
     }
 
-    deps.documents.addParticipant(channelId, deps.getLocalDid());
-    for (const did of participants) {
+    // **Authoritative, not additive.** Declaring a conversation states
+    // who is in it, so anyone already recorded and not named here is
+    // removed.
+    //
+    // The additive reading is unsafe. A channel can come into existence
+    // from an inbound message, which records its sender — so if
+    // declaring "this chat is for Bob" merely *added* Bob, a peer who
+    // had already written itself in by naming the id would stay, and
+    // receive the conversation. Use `addParticipant` to admit someone to
+    // a conversation that already exists.
+    const intended = new Set([deps.getLocalDid(), ...participants]);
+
+    for (const existing of deps.documents.participants(channelId)) {
+      if (!intended.has(existing)) {
+        deps.documents.removeParticipant(channelId, existing);
+      }
+    }
+
+    for (const did of intended) {
       deps.documents.addParticipant(channelId, did);
     }
+  }
+
+  /**
+   * Admit someone to a conversation that already exists.
+   *
+   * `createChannel` states the whole membership; this adds to it. Use
+   * this when someone joins a group rather than re-declaring the list,
+   * which would remove everyone you did not repeat.
+   *
+   * @param channelId The conversation.
+   * @param did Participant to admit.
+   */
+  addParticipant(channelId: string, did: string): void {
+    this.requireDeps().documents.addParticipant(channelId, did);
   }
 
   /**
@@ -512,12 +543,20 @@ export class ChatService {
       for (const did of participants ?? []) {
         documents.addParticipant(payload.channelId, did);
       }
-    }
 
-    // An author arriving in a channel we already hold belongs in it —
-    // otherwise a peer who joins later can never be synced to.
-    if (payload.authorDid) {
-      documents.addParticipant(payload.channelId, payload.authorDid);
+      // A conversation someone else opened: record them, so a reply has
+      // somewhere to go. This is the *only* place an author is inferred,
+      // and only while the channel is being created in response to them.
+      //
+      // Inferring it on a channel that already exists is what made
+      // channel ids security-relevant: a paired peer could name the id
+      // of a conversation it was not part of, write itself into the
+      // guest list, and receive everything sent there afterwards. An
+      // explicit `createChannel` now overrides whatever was inferred, so
+      // naming a conversation is what decides who is in it.
+      if (payload.authorDid) {
+        documents.addParticipant(payload.channelId, payload.authorDid);
+      }
     }
 
     this.scheduleSync(deps, payload.channelId);
