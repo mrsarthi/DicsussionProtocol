@@ -812,18 +812,85 @@ Machine load. Worth measuring before attributing — and worth measuring
 
 ---
 
-## Current State (2026-08-23)
+## Task: 0.6.0 — channel ids are not secrets
+**Status:** ✅ COMPLETE
+**Date:** 2026-08-25
+
+### The vulnerability
+Flagged by the EchoIt agent as an open entitlement gap they had "never
+tested whether it's exploitable". It is. Reproduced: Carol, paired with
+Alice but no part of her conversation with Bob, guessed the channel id
+and sent to it first. That created the channel on Alice's node and
+recorded Carol as a participant — a channel created from an inbound
+message records its sender. When Alice later declared the same channel
+for Bob and sent, Carol received `SECRET-FOR-BOB`.
+
+Channel ids are chosen by applications and travel in the clear. This made
+them load-bearing for confidentiality: one guess from failing.
+
+**The cause was our own rule, unevenly applied.** RFC 004 requires
+membership to be declared and never inferred; the code inferred it on
+every inbound message.
+
+- [x] Inference confined to creating a conversation in response to
+      someone — that case is real, and removing it would strand every new
+      conversation.
+- [x] `createChannel` is authoritative rather than additive. Without
+      this the fix above is insufficient: a squatter recorded at creation
+      survives the owner declaring the real membership.
+- [x] `addParticipant` added, so the safe reading is not also the
+      awkward one.
+- [x] RFC 004 now requires authoritative declaration as a security
+      property, with the reasoning, rather than leaving it a style choice.
+
+**Breaking**, and the reason for a minor: `createChannel(id, [x])` then
+`createChannel(id, [y])` was documented one release earlier as additive
+and now removes `x`. Three of our own suites used that pattern, which is
+what proves it a real break rather than a theoretical one.
+
+### Documentation reconciled against the code
+An audit cross-referencing README, PROGRESS, HOW_TO_USE, the four RFCs
+and source found eleven claims the docs made that the code did not
+honour. All verified before changing anything; all real. Three misled:
+capacity published as 65,536 against a working cap of 4,096; eviction
+documented — and *mandated* by RFC 002 — as LRU, which the code
+deliberately rejects because a local observation cannot produce a
+convergent root; and Tier 3 published as "Unrestricted" against a hard
+cap of 100 per epoch.
+
+Two filed as cosmetic were not. The root `package.json` carried `snarkjs`
+as a hard dependency, contradicting the 0.3.0 packaging decision and
+pulling its transitive advisory for anyone cloning. And
+`membership-sync.ts` warned of "LRU divergence at capacity" as a known
+limitation that deterministic eviction had already fixed — a comment
+inviting someone to fix what was already fixed.
+
+The README's own example omitted `createChannel` and would have delivered
+nothing since 0.4.0. Now runs; verified by running it.
+
+### Usage check
+No evidence of any external consumer: zero stars, forks or issues; 58
+unique cloners against **one** unique page view; no code on GitHub
+importing either package. npm shows ~1000 downloads a month, but
+per-version figures give it away — superseded releases are still
+downloaded more than the current one, which is scraper behaviour, not
+adoption. Relevant here because it means a breaking change strands
+nobody, and the 0.5.0 hole has no known victims.
+
+---
+
+## Current State (2026-08-25)
 
 | | |
 |---|---|
-| Version | **0.5.0**, both packages |
-| Tests | **549 passing, 0 failing** |
+| Version | **0.6.0**, both packages |
+| Tests | **552 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | 0.4.0 on npm; **0.5.0 pending** |
+| Published | 0.5.0 on npm; **0.6.0 pending** |
 | Docs | `HOW_TO_USE.md` + a README on each package |
 
 **Test suites:** 11 e2e, 14 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT, plus
