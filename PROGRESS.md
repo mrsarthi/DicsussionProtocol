@@ -1002,18 +1002,56 @@ waiting for it.
 
 ---
 
+## Task: 0.7.1 — presence went dark on the wrong side
+
+Found by exercising the **published** 0.7.0 from the registry rather than
+the repo, over real QUIC.
+
+`onPeerDisconnected` fired only for the peer that called `disconnect()`.
+The remote side — the one that actually needs to know, and the entire
+reason the event exists — was never told over `IrohTransport`.
+
+Each sub-stream's `readLoop` returns quietly when its stream ends, and
+that is correct in isolation: a finished sync stream must not take chat
+down with it. But when a peer leaves, *every* stream ends, and nothing
+was watching for that. The connection sat in `Active` indefinitely,
+`onClose` never fired, and presence built on it showed someone as present
+until the process exited.
+
+Fixed by counting live read loops and treating zero as departure.
+
+### Why the tests did not catch it
+`LocalTransport.close()` propagates the close to the peer explicitly —
+added in the same release, precisely so both sides are told. So every SDK
+test passed, on a transport that cannot exhibit the bug. The QUIC
+preflight tested ephemeral, profiles and blobs but not disconnect; the
+disconnect check ran on the in-process transport. Each half was covered
+and the intersection was not.
+
+**Third time this release that in-process transport hid a QUIC-only
+failure** (`0x07` sub-stream never opened, then attachments dropped from
+the envelope, now this). The pattern is consistent enough to plan around:
+anything touching connection lifecycle or the wire needs a test on
+`IrohTransport`, not only through `DicsussionClient`.
+
+`tests/e2e/suite-4.1-real-network.spec.ts` now covers departure over
+QUIC. Verified it times out against the unfixed build rather than
+assuming it would.
+
+---
+
 ## Current State (2026-08-25)
 
 | | |
 |---|---|
-| Version | **0.7.0**, both packages |
-| Tests | **602 passing, 0 failing** |
+| Version | **0.7.1**, both packages |
+| Tests | **605 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | 0.6.0 on npm; **0.7.0 pending** |
+| Published | 0.7.0 on npm; **0.7.1 pending** — 0.7.0 has the presence bug above |
 | Docs | `HOW_TO_USE.md` + a README on each package |
 
 **Test suites:** 11 e2e, 14 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT, plus

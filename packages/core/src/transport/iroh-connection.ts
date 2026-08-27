@@ -111,6 +111,14 @@ export class IrohConnection implements IConnection {
   }
 
   /** Notify once, then forget: close is not a repeating event. */
+  /**
+   * Sub-stream read loops still running.
+   *
+   * Reaching zero is how a peer's departure is detected; see
+   * `noticePeerGone`.
+   */
+  private liveReaders = 0;
+
   private notifyClosed(): void {
     const handlers = [...this.closeHandlers];
     this.closeHandlers.clear();
@@ -159,7 +167,37 @@ export class IrohConnection implements IConnection {
     await stream.send.setPriority(STREAM_PRIORITY[streamType] ?? 10);
 
     this.streams.set(streamType, { send: stream.send, reader: new FrameReader() });
-    void this.readLoop(streamType, stream.recv);
+
+    this.liveReaders++;
+    void this.readLoop(streamType, stream.recv).finally(() => {
+      this.liveReaders--;
+      this.noticePeerGone();
+    });
+  }
+
+  /**
+   * Conclude the peer has gone once every sub-stream has ended.
+   *
+   * One stream ending is not a departure — a finished sync stream must
+   * not take chat down with it, which is why `readLoop` returns quietly.
+   * But when a peer actually leaves, *all* of its streams end, and
+   * without this nothing ever notices: the connection sits in `Active`
+   * forever and `onClose` never fires. Presence built on that shows
+   * someone as present until this process exits.
+   */
+  private noticePeerGone(): void {
+    if (this.liveReaders > 0) return;
+    if (this._state !== ConnectionState.Active) return;
+
+    this._state = ConnectionState.Disconnected;
+    this.notifyClosed();
+    this.streams.clear();
+
+    try {
+      this.connection.close(0n, []);
+    } catch {
+      // Already gone from the other side — which is the case here.
+    }
   }
 
   /**

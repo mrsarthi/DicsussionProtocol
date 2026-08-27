@@ -17,7 +17,7 @@ import { expect, test } from '@playwright/test';
 import { generateKeypair } from '../../packages/core/src/transport/did-key.js';
 import { IrohTransport } from '../../packages/core/src/transport/iroh-transport.js';
 import type { IConnection } from '../../packages/core/src/transport/transport-interface.js';
-import { StreamType } from '../../packages/core/src/transport/types.js';
+import { ConnectionState, StreamType } from '../../packages/core/src/transport/types.js';
 
 // Real handshakes take hundreds of ms; in-process assumptions do not apply.
 test.describe.configure({ timeout: 60_000 });
@@ -387,6 +387,64 @@ test.describe('Suite 4.1 — Compression over QUIC (RFC 001 §3.4)', () => {
       expect(out.length).toBe(original.length);
       expect(out[0]).toBe(original[0]);
       expect(out[63_999]).toBe(original[63_999]);
+    } finally {
+      await pair.teardown();
+    }
+  });
+});
+
+test.describe('Suite 4.1 — Departure over QUIC', () => {
+  test('the remote side is told when a peer closes', async () => {
+    const pair = await connectedPair();
+
+    try {
+      // The bug this exists for: every sub-stream's read loop returned
+      // quietly when the peer went away, so nothing marked the
+      // connection closed. `onClose` never fired on the remote side, and
+      // presence built on it showed someone as present indefinitely.
+      //
+      // In-process transport cannot catch this — it propagates close
+      // explicitly, so both sides are told regardless.
+      const told = new Promise<void>((resolve) => {
+        pair.accepted.onClose(() => resolve());
+      });
+
+      await pair.dialed.close();
+
+      await told;
+      expect(pair.accepted.state).toBe(ConnectionState.Disconnected);
+    } finally {
+      await pair.teardown();
+    }
+  });
+
+  test('the closing side is told too', async () => {
+    const pair = await connectedPair();
+
+    try {
+      let fired = 0;
+      pair.dialed.onClose(() => fired++);
+
+      await pair.dialed.close();
+
+      expect(fired).toBe(1);
+    } finally {
+      await pair.teardown();
+    }
+  });
+
+  test('a listener attached after the close still fires', async () => {
+    const pair = await connectedPair();
+
+    try {
+      await pair.dialed.close();
+
+      let fired = 0;
+      pair.dialed.onClose(() => fired++);
+
+      // An app that subscribes a moment late must not miss the only
+      // notification it was ever going to get.
+      expect(fired).toBe(1);
     } finally {
       await pair.teardown();
     }
