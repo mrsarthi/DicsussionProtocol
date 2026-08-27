@@ -16,7 +16,7 @@
 ---
 
 > [!IMPORTANT]
-> **v0.6.0 — read this before depending on it.**
+> **v0.7.0 — read this before depending on it.**
 >
 > The Groth16 proving key is the output of a **completed six-party trusted
 > setup**, closed with a Bitcoin block hash committed to publicly two days
@@ -180,7 +180,7 @@ that fails if any Node builtin reaches the bundle. Full breakdown in
 The protocol is defined by four RFCs that cover the full stack from wire transport to the public SDK:
 
 ### [RFC 001 — Transport & Discovery](specs/RFC_001-Transport-&-Discovery.md)
-Peer-to-peer QUIC transport, `did:key` addressing, mDNS local discovery, NAT traversal via Iroh STUN hole-punching, and DERP relay fallback. Defines the 12-byte wire frame header and six multiplexed sub-stream types (`0x01`–`0x06`).
+Peer-to-peer QUIC transport, `did:key` addressing, mDNS local discovery, NAT traversal via Iroh STUN hole-punching, and DERP relay fallback. Defines the 12-byte wire frame header and nine multiplexed sub-stream types (`0x01`–`0x09`).
 
 ### [RFC 002 — Data Sync & Schema Lenses](specs/RFC_002-Data-Sync.md)
 Multi-document Automerge CRDT architecture, Bounded Sparse Merkle Tree (depth 16, so 65,536 leaves — but the working cap is **4,096 members per channel**, because rebuild cost is O(N·D)) with Poseidon hashing and deterministic lowest-index eviction, and declarative JSON Schema Lenses for cross-version compatibility.
@@ -339,6 +339,26 @@ const profile = await alice.trust.getProfile(bob.did);
 console.log(`Trust: ${profile.subjectiveScore} POC (Tier ${profile.tier})`);
 ```
 
+Three things a chat needs that a message is the wrong shape for:
+
+```typescript
+// Presence and typing: delivered now, or not at all. Never stored, so a
+// heartbeat does not grow the conversation forever.
+await alice.chat.sendEphemeral('general', new TextEncoder().encode('typing'));
+bob.onPeerDisconnected.on('peer', ({ peerDid }) => { /* the dot goes out */ });
+
+// A name and picture the other person controls — one current value,
+// replaced rather than appended, and only for peers you have paired.
+await alice.identity.setMyProfile({ displayName: 'Alice' });
+bob.identity.onPeerProfile((did, profile) => { /* redraw */ });
+
+// Files travel outside the message, which carries only a hash. Bytes
+// move when a recipient asks, so an attachment nobody opens never sends.
+const ref = await alice.blobs.put(photo, 'image/png');
+await alice.chat.sendMessage({ channelId: 'general', content: 'look', attachments: [ref] });
+const bytes = await bob.blobs.get(ref);   // resumes if interrupted
+```
+
 Real transports are chosen per host — `'iroh'` on desktop, a bridged
 transport in a Tauri or React Native webview, `'websocket'` in a
 browser. `init()` defaults to an in-process transport so the above runs
@@ -358,7 +378,7 @@ Every frame on the wire carries a 12-byte binary header:
 └──────────┴─────────────┴───────┴────────────┴──────────┘
 ```
 
-Six multiplexed sub-streams over a single QUIC connection:
+Nine multiplexed sub-streams over a single QUIC connection:
 
 | ID | Stream | Purpose |
 |---|---|---|
@@ -368,6 +388,9 @@ Six multiplexed sub-streams over a single QUIC connection:
 | `0x04` | Voucher Handshakes | Blind endorsement voucher issuance |
 | `0x05` | RLN Broadcast | Rate-limiting nullifier signal propagation |
 | `0x06` | Share Exchange | RLN polynomial share gossip for transitive slashing |
+| `0x07` | Ephemeral | Presence, typing, read receipts — delivered, never stored |
+| `0x08` | Peer Profiles | Self-published name, bio and picture; paired peers only |
+| `0x09` | Blob Transfer | Content-addressed images and files, requested by hash |
 
 
 ---

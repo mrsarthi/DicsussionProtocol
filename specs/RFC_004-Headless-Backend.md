@@ -3,7 +3,7 @@
 - **Target Module:** `@dicsussion/sdk` (`packages/HLessEnd`)
 - **Status:** Draft
 - **Author:** Parth
-- **Last Updated:** 2026-08-23
+- **Last Updated:** 2026-08-27
 
 ---
 
@@ -82,6 +82,14 @@ The local store is partitioned into logical collections:
 3. **`voucher_redeemed`**: Tracks blind endorsement voucher tokens (`+5 POC` gifts) and redemption nullifiers to prevent double-spending.
 4. **`channel_meta`**: Stores metadata, peer lists, and access control thresholds for active chat channels.
 5. **`message_stream`**: Stores end-to-end encrypted message payloads and their proof metadata.
+6. **`peer_profiles`**: One row per peer holding their self-published name,
+   bio and picture (RFC 001 §6.2), including this node's own. Replaced on
+   update rather than appended, so a profile has one current value and no
+   history.
+7. **`blobs`**: Content-addressed attachment bytes, keyed by SHA-256
+   (RFC 001 §6.3). A row whose `received` is below its `size` is an
+   unfinished transfer that a later request resumes from rather than
+   restarting.
 
 ---
 
@@ -219,8 +227,17 @@ export class DicsussionClient {
   public readonly groups: GroupService;
   public readonly trust: TrustService;
   public readonly identity: IdentityService;
+  public readonly blobs: BlobService;
   public readonly onNetworkStatus: Emitter<NetworkStatus>;
   public readonly onPeerConnected: Emitter<PeerConnectedEvent>;
+  /**
+   * A connection ended, from either side.
+   *
+   * The counterpart to `onPeerConnected`. Presence derived from the
+   * connected event alone switches on and never off, and would report a
+   * peer who closed their app hours ago as present.
+   */
+  public readonly onPeerDisconnected: Emitter<PeerDisconnectedEvent>;
 
   public static async init(
     config?: ClientConfig,
@@ -298,8 +315,32 @@ export class ChatService {
   removeAllListeners(channelId: string): void {
     // Removes all listeners for a channel and clears any pending channel-scoped subscriptions.
   }
+
+  /**
+   * Send a signal that is only true while both peers are connected
+   * (Sub-Stream `0x07`).
+   *
+   * Deliberately none of `sendMessage`'s guarantees: not written to the
+   * document, not queued in the outbox, not retried, and not replayed to
+   * a peer that reconnects. Returns how many peers received it, where
+   * zero means nobody was connected rather than that anything failed.
+   */
+  async sendEphemeral(channelId: string, payload: Uint8Array): Promise<number> {
+    return 0;
+  }
+
+  onEphemeral(
+    channelId: string,
+    callback: (fromDid: string, payload: Uint8Array) => void,
+  ): () => void {
+    return () => {};
+  }
 }
 ```
+
+`SendMessageOptions.attachments` carries `BlobRef` handles (RFC 001
+§6.3). Only the handles travel with the message; an implementation MUST
+NOT send the bytes until a recipient requests them.
 
 #### `client.trust` Namespace
 ```typescript
@@ -359,8 +400,70 @@ export class IdentityService {
     return '';
   }
   async revokeKey(): Promise<void> {}
+
+  /**
+   * Publish a name, bio or picture (Sub-Stream `0x08`).
+   *
+   * Omitted fields are kept; `null` clears one. Reaches paired peers
+   * that are connected now and the rest when they next connect.
+   */
+  async setMyProfile(update: ProfileUpdate): Promise<number> {
+    return 0;
+  }
+  getMyProfile(): PeerProfile | undefined {
+    return undefined;
+  }
+  getPeerProfile(did: string): PeerProfile | undefined {
+    return undefined;
+  }
+  onPeerProfile(
+    callback: (did: string, profile: PeerProfile) => void,
+  ): () => void {
+    return () => {};
+  }
 }
 ```
+
+The display name in a profile is what a peer calls **themselves**, which
+is not necessarily what an application should display. An implementation
+holding a locally-assigned name SHOULD prefer it, so that changing one's
+own name cannot change what appears in someone else's contact list.
+
+#### `client.blobs` Namespace
+```typescript
+export interface BlobRef {
+  /** Lowercase hex SHA-256 of the content. */
+  hash: string;
+  size: number;
+  mime: string;
+}
+
+export class BlobService {
+  /** Store bytes locally and return a handle. Nothing is sent. */
+  async put(bytes: Uint8Array, mime: string): Promise<BlobRef> {
+    return {} as BlobRef;
+  }
+  /** Fetch from local storage, or from any paired peer that has it. */
+  async get(ref: BlobRef): Promise<Uint8Array> {
+    return new Uint8Array();
+  }
+  async has(ref: BlobRef): Promise<boolean> {
+    return false;
+  }
+  async delete(ref: BlobRef): Promise<void> {}
+  onProgress(
+    ref: BlobRef,
+    callback: (received: number, total: number) => void,
+  ): () => void {
+    return () => {};
+  }
+}
+```
+
+Failures MUST be distinguishable: `BlobTooLargeError`,
+`BlobUnavailableError` and `BlobCorruptError` are three different things
+to tell a user, and an implementation that collapses them leaves an
+application unable to say which happened.
 
 ### 7.4 Conversation Membership
 

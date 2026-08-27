@@ -3,7 +3,7 @@
 - **Target Module:** `packages/core`
 - **Status:** Draft
 - **Authors:** Parth
-- **Last Updated:** 2026-08-18
+- **Last Updated:** 2026-08-27
 
 ---
 
@@ -111,6 +111,13 @@ To support metadata-private "+5 POC" gifts between peers, ZekPoc uses **Chaumian
 ## 6. Encrypted Wire Envelope Structure
 
 All payloads sent over Sub-Stream `0x02` MUST be wrapped in a binary security envelope containing the single unified Groth16 proof, ephemeral public key, and AES-256-GCM ciphertext.
+
+The same envelope MUST also carry Sub-Streams `0x07` (ephemeral), `0x08`
+(profiles) and `0x09` (blobs), with the proof-bearing fields zeroed since
+none of them is rate-limited. Reusing it is deliberate: those streams
+would otherwise be distinguishable by frame shape alone, letting an
+observer or relay tell a typing indicator, an avatar and a sentence apart
+without decrypting any of them.
 
 ### 6.1 Wire Format
 

@@ -80,18 +80,13 @@ test.describe('Transport — Wire Frame Codec', () => {
     expect(() => decodeFrameHeader(new Uint8Array(4))).toThrow(/too small/);
   });
 
-  test('all six stream types encode correctly', async () => {
+  test('every stream type encodes correctly', async () => {
     const { encodeFrame, decodeFrame, StreamType } = await import(
       '../../packages/core/src/transport/index.js'
     );
-    const types = [
-      StreamType.CRDT_SYNC,
-      StreamType.E2EE_MESSAGE,
-      StreamType.REVOCATION_GOSSIP,
-      StreamType.VOUCHER_HANDSHAKE,
-      StreamType.RLN_SIGNAL,
-      StreamType.RLN_SHARE_EXCHANGE,
-    ];
+    // Read from StreamType, not listed: a hand-kept list quietly stops
+    // covering a stream type the day one is added.
+    const types = Object.values(StreamType);
 
     for (const st of types) {
       const payload = new Uint8Array([st]);

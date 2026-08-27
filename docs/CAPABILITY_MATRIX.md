@@ -19,6 +19,9 @@ scan reveals. Every ❌ below names the specific dependency that blocks it.
 | CRDT sync | ✅ | ✅ | ✅ |
 | ZK proving (Groth16) | ✅ | ✅ | ❌ |
 | ZK-RLN rate limiting | ✅ | ✅ | ✅ |
+| Ephemeral signals (0x07) | ✅ | ✅ | ✅ |
+| Peer profiles (0x08) | ✅ | ✅ | ✅ |
+| Blob transfer (0x09) | ✅ | ✅ | ✅ |
 | mDNS discovery | ✅ | ⚠️ | ❌ |
 
 **Browsers are supported.** Import from `@dicsussion/sdk/browser`, supply

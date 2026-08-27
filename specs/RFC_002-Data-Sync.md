@@ -3,7 +3,7 @@
 - **Target Module:** `packages/core`
 - **Status:** Draft
 - **Authors:** Parth
-- **Last Updated:** 2026-08-23
+- **Last Updated:** 2026-08-27
 
 ---
 
@@ -45,12 +45,26 @@ Every document MUST conform to a registered schema structure:
           "timestamp": 1785148100,
           "zk_proof": "base64-serialized-groth16-proof",
           "rln_nullifier": "base64-serialized-nullifier",
-          "zk_envelope_ref": "hash-of-rln-proof"
+          "zk_envelope_ref": "hash-of-rln-proof",
+          "attachments": "[{\"hash\":\"<sha256-hex>\",\"size\":40213,\"mime\":\"image/png\"}]"
         }
       }
     }
 
 `author_did` MAY be `null` when `nullifier_hash` is present for anonymous RLN channels. Received messages MUST persist the serialized Groth16 proof (`zk_proof`) and RLN nullifier (`rln_nullifier`) locally for offline dispute resolution.
+
+`attachments` holds handles to blob content transferred on Sub-Stream
+`0x09` (RFC 001 §6.3) — a content hash, a length and a media type. The
+bytes themselves MUST NOT be inlined here: a document is replicated in
+full to every participant and kept indefinitely, so an inlined picture is
+copied to people who never opened it and cannot afterwards be removed.
+
+It is stored **serialized**, not as a structured list. Automerge merges
+nested maps field by field, so two replicas editing the same message
+could otherwise combine halves of two different handles into a reference
+to content neither of them holds. A malformed value MUST be read as no
+attachments rather than raising: one bad row must not make a conversation
+unreadable.
 
 ---
 

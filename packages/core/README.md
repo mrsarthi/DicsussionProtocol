@@ -133,6 +133,18 @@ reconstruct the membership graph and read history replicated through
 sync. A known gap, not a design decision. `IrohTransport` and a bridged
 transport over an encrypted channel have no such intermediary.
 
+**`IConnection` gained `onClose` in 0.7.0.** Only relevant if you
+implement the interface directly — `createBridgedTransport` provides it.
+It must fire once when the connection ends, from either side, and fire
+immediately if attached to one that has already closed. Presence built on
+connection events alone would otherwise switch on and never off.
+
+**Stream types now run `0x01`–`0x09`**, having gained ephemeral signals,
+peer profiles and blob transfer. If your transport enumerates them,
+derive the list from `StreamType` rather than writing it out: a
+hand-maintained one silently stops covering a stream the day another is
+added, and the failure appears only at runtime, on the first send.
+
 ---
 
 ## More
