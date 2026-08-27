@@ -38,7 +38,9 @@ import { GroupService } from './group-service.js';
 import { IdentityService } from './identity-service.js';
 import type { LocalIdentity } from './identity-service.js';
 import { currentEpoch, OutboxManager } from './outbox.js';
+import { BlobService } from './blob-service.js';
 import { PeerRegistry } from './peer-registry.js';
+import { ProfileService } from './profile-service.js';
 import type { MessagePayload } from './message-codec.js';
 import { SessionManager } from './session-manager.js';
 import {
@@ -177,6 +179,8 @@ export class DicsussionClient {
   private storage: IStorageDriver | null = null;
   private documentStore: DocumentStore | null = null;
   private messageStore: MessageStore | null = null;
+  private profiles: ProfileService | null = null;
+  private blobStore: BlobService | null = null;
   private voucherService: VoucherService | null = null;
   private voucherHandshake: VoucherHandshake | null = null;
   private voucherStore: VoucherStore | null = null;
@@ -257,6 +261,12 @@ export class DicsussionClient {
       onEphemeral: (peerDid, channelId, payload) => {
         this.chat._emitEphemeral(peerDid, channelId, payload);
       },
+      onProfile: async (peerDid, encoded) => {
+        await this.profiles?.ingestRemote(peerDid, encoded);
+      },
+      onBlobFrame: async (peerDid, payload) => {
+        await this.blobStore?.handleFrame(peerDid, payload);
+      },
       syncEngine: this.syncEngine,
       membershipSync: this.membershipSync,
       onMessage: async (payload) => {
@@ -300,6 +310,25 @@ export class DicsussionClient {
   }
 
   // ─── Identity & addressing ────────────────────────────────────────────
+
+  /**
+   * Content-addressed blobs — images and files.
+   *
+   * `put()` stores bytes and returns a handle small enough to attach to
+   * a message; `get()` fetches the bytes from whoever has them. Nothing
+   * is sent until a recipient asks, so an attachment nobody opens never
+   * crosses the wire.
+   */
+  get blobs(): BlobService {
+    if (!this.blobStore) {
+      throw new Error(
+        'Blobs are not available until init() completes. Await ' +
+          'DicsussionClient.init() before using them.',
+      );
+    }
+
+    return this.blobStore;
+  }
 
   /** This node's did:key identifier. */
   get did(): string {
@@ -351,6 +380,31 @@ export class DicsussionClient {
    */
   addPeer(did: string, encryptionPublicKey: Uint8Array): void {
     this.peers.addPeer(did, encryptionPublicKey);
+
+    // A stranger who dialled us is connected but was not entitled to our
+    // profile. Pairing is the moment that changes, and waiting for a
+    // reconnection instead would leave them nameless for as long as the
+    // connection happens to last.
+    const connection = this.peers.getPeer(did)?.connection;
+    if (connection) this.offerProfile(connection);
+  }
+
+  /**
+   * Send our profile to a peer, if we have one and they are paired.
+   *
+   * A ticket is shareable, so an unpaired peer who dialled it must not
+   * learn our name and picture from having done so.
+   */
+  private offerProfile(connection: IConnection): void {
+    if (this.peers.getPeer(connection.peerDid)?.paired !== true) return;
+
+    const encoded = this.profiles?.encodeMine();
+    if (!encoded) return;
+
+    void this.sessions.sendProfileTo(connection, encoded).catch(() => {
+      // The peer gets it on the next connection; failing to announce a
+      // profile must never fail the connection carrying it.
+    });
   }
 
   /**
@@ -375,6 +429,7 @@ export class DicsussionClient {
     const connection = await transport.connect(ticket);
     this.sessions.registerConnection(connection);
     this.watchForClose(connection);
+    this.offerProfile(connection);
     this.announcePeer(connection.peerDid, 'outbound');
     await this.sessions.beginSync(connection);
     await this.drainAfterReconnect();
@@ -403,7 +458,6 @@ export class DicsussionClient {
     }
   }
 
-  /** Tell listeners a peer handshake completed, and whether it counts. */
   /** Report a connection ending, once, to whoever is listening. */
   private watchForClose(connection: IConnection): void {
     connection.onClose(() => {
@@ -414,6 +468,7 @@ export class DicsussionClient {
     });
   }
 
+  /** Tell listeners a peer handshake completed, and whether it counts. */
   private announcePeer(
     peerDid: string,
     direction: PeerConnectedEvent['direction'],
@@ -713,6 +768,10 @@ export class DicsussionClient {
 
     this.peers.clear();
     this.online = false;
+
+    // An in-flight fetch has no peer left to ask, and its stall timer
+    // would otherwise hold the process open for another thirty seconds.
+    this.blobStore?.dispose();
     this.onNetworkStatus.removeAllListeners();
     this.onPeerConnected.removeAllListeners();
     this.onPeerDisconnected.removeAllListeners();
@@ -738,6 +797,26 @@ export class DicsussionClient {
       this.config.storageKey.length > 0 ? this.config.storageKey : undefined,
     );
 
+    // Needs both the storage driver and the did, so it cannot be built
+    // in the constructor alongside the other services.
+    this.profiles = new ProfileService({
+      storage: this.storage,
+      selfDid: this.requireIdentity().did,
+      broadcast: (encoded) => this.sessions.publishProfile(encoded),
+    });
+    this.identity.attachProfiles(this.profiles);
+    await this.profiles.load();
+
+    this.blobStore = new BlobService({
+      storage: this.storage,
+      sendTo: (peerDid, payload) => this.sessions.sendBlobTo(peerDid, payload),
+      // Anyone paired and connected, not only whoever sent the message:
+      // in a group the first person to fetch a picture becomes a second
+      // source for it, and the original sender may well be offline.
+      reachablePeers: () =>
+        this.peers.listPairedConnected().map((peer) => peer.did),
+    });
+
     // Voluntary revocation is applied locally and never gossiped: a
     // USER_REVOKED tombstone carries no proof that its signer owns the
     // commitment it names, so peers reject it. Broadcasting one that
@@ -753,6 +832,7 @@ export class DicsussionClient {
         this.sessions.registerConnection(connection);
         this.watchForClose(connection);
         this.announcePeer(connection.peerDid, 'inbound');
+        this.offerProfile(connection);
         void this.drainAfterReconnect();
       },
     );

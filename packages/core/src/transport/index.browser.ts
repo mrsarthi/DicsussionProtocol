@@ -211,6 +211,11 @@ export const STREAM_PRIORITY: Record<number, number> = {
   [StreamType.RLN_SIGNAL]: 30,
   [StreamType.E2EE_MESSAGE]: 20,
   [StreamType.EPHEMERAL]: 10,
+  // Below chat: a profile picture arriving a moment after the sentence
+  // that prompted someone to look at it costs nothing, and a bulk blob
+  // transfer must never delay the conversation carrying it.
+  [StreamType.PROFILE]: 15,
+  [StreamType.BLOB]: 5,
 };
 
 // ─── Stubs ───────────────────────────────────────────────────────────────

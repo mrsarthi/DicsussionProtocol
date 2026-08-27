@@ -75,7 +75,7 @@ Every raw frame sent across a transport sub-stream MUST be prefixed with a fixed
 | Offset (Bytes) | Field Name | Type | Description |
 |---|---|---|---|
 | 0..1 | `magic` | `u16` | Fixed protocol identifier (`0x5032`) |
-| 2 | `stream_type` | `u8` | Sub-protocol ID (`0x01` Channel Membership & Automerge State Sync, `0x02` E2EE Message Envelopes, `0x03` Key/Identity/Slashing Revocation Gossip, `0x04` Voucher Issuance Handshakes, `0x05` RLN Signal Broadcast, `0x06` RLN Polynomial Share Exchange, `0x07` Ephemeral Payloads) |
+| 2 | `stream_type` | `u8` | Sub-protocol ID (`0x01` Channel Membership & Automerge State Sync, `0x02` E2EE Message Envelopes, `0x03` Key/Identity/Slashing Revocation Gossip, `0x04` Voucher Issuance Handshakes, `0x05` RLN Signal Broadcast, `0x06` RLN Polynomial Share Exchange, `0x07` Ephemeral Payloads, `0x08` Peer Profiles, `0x09` Blob Transfer) |
 | 3 | `flags` | `u8` | Bit flags (`0x01` Compressed via LZ4, `0x02` Priority) |
 | 4..7 | `payload_len` | `u32` | Big-endian length of the following payload bytes |
 | 8..11 | `checksum` | `u32` | CRC32-C checksum of the payload bytes |
@@ -264,6 +264,74 @@ written to disk, for signals nobody will ever read back.
 
 `0x07` was assigned after `0x06`, so an implementation predating it drops
 the frame under §7's unknown-stream rule rather than failing on it.
+
+---
+
+### 6.2 Peer Profiles (`0x08`)
+
+Stream `0x08` carries a peer's self-published profile: a display name, a
+short bio, and a picture. Frames MUST be sealed as `0x02` is.
+
+A profile MUST be sent only to a paired peer and accepted only from one.
+A ticket is shareable and its holder is not yet a contact, so a node that
+answered a dial has disclosed nothing about who is behind it.
+
+A profile is a **single-writer, mutable record**, not an append-only
+stream: only its subject may author one, and a received profile replaces
+the one held rather than joining a list. A frame whose `updatedAt` is not
+strictly greater than the held value MUST be ignored, which is what stops
+a replayed frame from reverting a name or picture. `updatedAt` is the
+author's own clock and orders only that author's versions against each
+other; it MUST NOT be used to order anything requiring agreement between
+nodes.
+
+Implementations MUST enforce a size cap on the picture and reject an
+oversized one in **both** directions. Enforcing it only on the way out
+leaves a peer running a modified build able to write an arbitrarily large
+record into every contact's storage.
+
+The name in a profile is what a peer calls themselves, which is not
+necessarily what an application should display. An application holding a
+locally-assigned name SHOULD prefer it.
+
+### 6.3 Blob Transfer (`0x09`)
+
+Stream `0x09` moves content-addressed bytes — images and files — outside
+the message that references them. A message carries only a handle: the
+SHA-256 of the content, its length, and a media type.
+
+Bytes MUST NOT be sent unsolicited. A recipient requests a blob by hash
+when it wants it, so an attachment nobody opens never crosses the wire.
+
+Three payload kinds, each prefixed by a one-byte tag: `REQUEST` (hash,
+byte offset), `CHUNK` (hash, offset, media type, bytes), and
+`UNAVAILABLE` (hash). A request names an offset so an interrupted
+transfer resumes rather than restarting; a responder MUST honour it.
+
+A responder MUST NOT serve a blob it holds only partially — a truncated
+transfer is indistinguishable to the requester from a complete one. It
+MUST answer `UNAVAILABLE` instead, so a requester can try another source
+rather than waiting on a timeout.
+
+Any peer holding the content may serve it, not only the sender of the
+message referencing it: in a group the first recipient to fetch a picture
+becomes a second source, and the original sender is frequently offline.
+Serving MUST still be restricted to paired peers — a hash is a capability
+if anyone may redeem it.
+
+A requester MUST verify that assembled bytes hash to the requested value
+and MUST discard them otherwise. It MUST NOT retain bytes that failed
+this check: resuming from them would fail identically forever.
+
+Implementations MUST enforce a size cap and MUST surface a distinguishable
+error for each of "too large", "nobody has it" and "did not match its
+hash". A caller that cannot tell these apart cannot explain any of them
+to a person.
+
+Blobs are **not** garbage collected when the messages referencing them
+are gone. A peer that has not yet synchronised holds references this node
+cannot see, so deleting on their behalf discards data still in use.
+Deletion is explicit.
 
 ---
 

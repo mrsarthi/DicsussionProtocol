@@ -19,10 +19,10 @@ import type { Frame } from '@dicsussion/core/transport';
 import type { IConnection } from '@dicsussion/core/transport';
 import type { MessagePayload } from './message-codec.js';
 import {
-  openEphemeral,
   openMessage,
-  sealEphemeral,
+  openOpaque,
   sealMessage,
+  sealOpaque,
 } from './message-codec.js';
 import { currentEpoch } from './outbox.js';
 import type { PeerRegistry } from './peer-registry.js';
@@ -60,6 +60,17 @@ export interface SessionManagerDeps {
     channelId: string,
     payload: Uint8Array,
   ) => void;
+  /**
+   * A peer sent us their profile on Stream `0x08`.
+   *
+   * Only ever called for a paired peer: `handleFrame` drops everything
+   * from an unpaired one before routing.
+   */
+  readonly onProfile?: (peerDid: string, encoded: Uint8Array) => Promise<void>;
+  /**
+   * A paired peer sent a blob request, chunk, or refusal on `0x09`.
+   */
+  readonly onBlobFrame?: (peerDid: string, payload: Uint8Array) => Promise<void>;
   readonly syncEngine: CrdtSyncEngine;
   /** Hand a decrypted message to the chat layer. */
   readonly onMessage: (payload: MessagePayload) => Promise<void>;
@@ -224,7 +235,7 @@ export class SessionManager {
       sends.push(
         connection.send(
           StreamType.EPHEMERAL,
-          sealEphemeral(framed, connection.sessionKey, epoch),
+          sealOpaque(framed, connection.sessionKey, epoch),
         ),
       );
     }
@@ -232,6 +243,72 @@ export class SessionManager {
     await Promise.all(sends);
 
     return sends.length;
+  }
+
+  /**
+   * Send our profile to every paired, connected peer.
+   *
+   * Not gated by channel membership, unlike everything else here: a
+   * profile belongs to a person rather than a conversation, and pairing
+   * is the whole of its access control. Unpaired peers are excluded
+   * because `listPairedConnected` excludes them.
+   *
+   * @returns How many peers received it.
+   */
+  async publishProfile(encoded: Uint8Array): Promise<number> {
+    const epoch = currentEpoch();
+    const sends: Array<Promise<void>> = [];
+
+    for (const peer of this.deps.peers.listPairedConnected()) {
+      const connection = peer.connection;
+      if (!connection) continue;
+
+      sends.push(
+        connection.send(
+          StreamType.PROFILE,
+          sealOpaque(encoded, connection.sessionKey, epoch),
+        ),
+      );
+    }
+
+    await Promise.all(sends);
+
+    return sends.length;
+  }
+
+  /**
+   * Send a blob payload to one peer.
+   *
+   * @returns Whether the peer was reachable. A caller moves on to
+   *   another source rather than waiting for a timeout it can predict.
+   */
+  async sendBlobTo(peerDid: string, payload: Uint8Array): Promise<boolean> {
+    const peer = this.deps.peers.getPeer(peerDid);
+
+    // Paired as well as connected. Blobs are requested by hash, so an
+    // unpaired peer that learned one could otherwise pull the bytes
+    // behind a picture it was never sent.
+    if (!peer?.paired || !peer.connection) return false;
+
+    const connection = peer.connection;
+
+    await connection.send(
+      StreamType.BLOB,
+      sealOpaque(payload, connection.sessionKey, currentEpoch()),
+    );
+
+    return true;
+  }
+
+  /** Send our profile to one peer, on connecting or on being paired. */
+  async sendProfileTo(
+    connection: IConnection,
+    encoded: Uint8Array,
+  ): Promise<void> {
+    await connection.send(
+      StreamType.PROFILE,
+      sealOpaque(encoded, connection.sessionKey, currentEpoch()),
+    );
   }
 
   /**
@@ -295,6 +372,18 @@ export class SessionManager {
           break;
         case StreamType.EPHEMERAL:
           this.handleEphemeralFrame(frame, connection);
+          break;
+        case StreamType.BLOB:
+          await this.deps.onBlobFrame?.(
+            connection.peerDid,
+            openOpaque(frame.payload, connection.sessionKey),
+          );
+          break;
+        case StreamType.PROFILE:
+          await this.deps.onProfile?.(
+            connection.peerDid,
+            openOpaque(frame.payload, connection.sessionKey),
+          );
           break;
         case StreamType.VOUCHER_HANDSHAKE:
           await this.deps.onVoucherFrame?.(frame.payload, connection);
@@ -383,7 +472,7 @@ export class SessionManager {
   }
 
   private handleEphemeralFrame(frame: Frame, connection: IConnection): void {
-    const opened = openEphemeral(frame.payload, connection.sessionKey);
+    const opened = openOpaque(frame.payload, connection.sessionKey);
     const { channelId, payload } = decodeEphemeral(opened);
 
     // Same membership rule as `0x02`. A signal is still a disclosure —

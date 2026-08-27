@@ -71,6 +71,17 @@ export interface ChannelMetaRecord {
   readonly lastActivity: number;
 }
 
+/** Peer-authored profile record (Stream `0x08`). */
+export interface PeerProfileRecord {
+  readonly did: string;
+  readonly displayName?: string;
+  readonly bio?: string;
+  readonly avatarMime?: string;
+  readonly avatar?: Uint8Array;
+  /** Author's clock. Only a strictly newer record replaces this one. */
+  readonly updatedAt: number;
+}
+
 /** RFC 004 §4.1 — Message stream record. */
 export interface MessageRecord {
   readonly id: string;
@@ -111,4 +122,8 @@ export const StorageCollections = {
   VOUCHER_NULLIFIERS: 'voucher_nullifiers',
   /** Signed channel genesis anchors. */
   GENESIS_ANCHORS: 'genesis_anchors',
+  /** Peer-authored profiles: name, bio, picture (Stream `0x08`). */
+  PEER_PROFILES: 'peer_profiles',
+  /** Content-addressed blobs, complete and partial (Stream `0x09`). */
+  BLOBS: 'blobs',
 } as const;

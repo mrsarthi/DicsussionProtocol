@@ -77,6 +77,8 @@ export function getPrimaryKeyColumn(collection: string): string {
     crdt_documents: 'doc_id',
     voucher_nullifiers: 'nullifier',
     genesis_anchors: 'channel_id',
+    peer_profiles: 'did',
+    blobs: 'hash',
   };
   return pkMap[collection] ?? 'id';
 }

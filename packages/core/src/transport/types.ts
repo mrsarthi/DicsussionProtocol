@@ -40,6 +40,34 @@ export const StreamType = {
    * frame rather than failing on it (RFC 001 §7).
    */
   EPHEMERAL: 0x07,
+  /**
+   * Peer profile records — a name, a bio, a picture.
+   *
+   * A profile is mutable and single-writer: only its subject may change
+   * it, and a new one replaces the old rather than adding to a list.
+   * That is why it is not a message. Carried as specially-tagged chat it
+   * would have to be filtered out of every view forever, any client not
+   * knowing the convention would render the tag as text, and each new
+   * avatar would sit in message history permanently on every device.
+   *
+   * Sent only to paired peers and accepted only from them. A ticket is
+   * shareable, so a stranger who dials one learning your name and face
+   * would be a disclosure nobody asked for.
+   */
+  PROFILE: 0x08,
+  /**
+   * Content-addressed blob transfer — images and files.
+   *
+   * Bytes travel here rather than inside the message that references
+   * them. Base64 in a message body is ~33% larger than the file, enters
+   * the CRDT permanently, loads whole into memory on both sides, and
+   * cannot be deleted afterwards. A handful of photos would outweigh
+   * every sentence in a conversation, forever.
+   *
+   * Requests carry an offset, so a transfer that dies at 90% resumes
+   * there rather than starting again.
+   */
+  BLOB: 0x09,
 } as const;
 
 export type StreamTypeValue = (typeof StreamType)[keyof typeof StreamType];

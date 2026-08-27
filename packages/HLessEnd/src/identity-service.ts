@@ -13,6 +13,8 @@ import type { BlindKeyPair, KeyPair } from '@dicsussion/core/crypto';
 import { generateBlindKeyPair, membershipCommitment } from '@dicsussion/core/crypto';
 import type { Ed25519KeyPair } from '@dicsussion/core/transport';
 import { createMnemonic, deriveIdentity } from './identity-derivation.js';
+import type { PeerProfile, ProfileUpdate } from './profile-service.js';
+import { ProfileService } from './profile-service.js';
 import type { RevocationTombstone } from './slashing/tombstone.js';
 import { createLocalRetirementTombstone } from './slashing/tombstone.js';
 import { SecretBox } from './storage/secret-box.js';
@@ -65,6 +67,7 @@ export interface LocalIdentity {
 export class IdentityService {
   private identity: LocalIdentity | null = null;
   private storage: IStorageDriver | null = null;
+  private profiles: ProfileService | null = null;
   private publishRevocation:
     | ((tombstone: RevocationTombstone) => Promise<void>)
     | null = null;
@@ -85,6 +88,61 @@ export class IdentityService {
   /** Attach a storage driver so identities can be persisted. */
   attachStorage(storage: IStorageDriver): void {
     this.storage = storage;
+  }
+
+  /** Attach the profile store. Called during `init()`. */
+  attachProfiles(profiles: ProfileService): void {
+    this.profiles = profiles;
+  }
+
+  /**
+   * Publish a name, bio or picture for other people to see.
+   *
+   * Fields omitted are kept; pass `null` to clear one. Reaches paired
+   * peers that are connected now, and the rest when they next connect.
+   *
+   * The name published here is what this person calls themselves, which
+   * is not necessarily what anyone else should see them called — an
+   * application that keeps local nicknames should prefer its own.
+   *
+   * @returns How many peers received it; zero means nobody was
+   *   connected, not that anything failed.
+   * @throws {ProfileTooLargeError} If a field exceeds its cap.
+   */
+  async setMyProfile(update: ProfileUpdate): Promise<number> {
+    return this.requireProfiles().setMyProfile(update);
+  }
+
+  /** This node's published profile, if one has been set. */
+  getMyProfile(): PeerProfile | undefined {
+    return this.requireProfiles().getMyProfile();
+  }
+
+  /** A peer's published profile, or undefined if they have not set one. */
+  getPeerProfile(did: string): PeerProfile | undefined {
+    return this.requireProfiles().getPeerProfile(did);
+  }
+
+  /**
+   * Subscribe to profile updates from peers.
+   *
+   * @returns An unsubscribe function.
+   */
+  onPeerProfile(
+    handler: (did: string, profile: PeerProfile) => void,
+  ): () => void {
+    return this.requireProfiles().onPeerProfile(handler);
+  }
+
+  private requireProfiles(): ProfileService {
+    if (!this.profiles) {
+      throw new Error(
+        'Profiles are not available until init() completes. Await ' +
+          'DicsussionClient.init() before setting or reading one.',
+      );
+    }
+
+    return this.profiles;
   }
 
   /**

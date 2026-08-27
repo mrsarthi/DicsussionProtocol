@@ -13,6 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { Emitter } from '@dicsussion/core/transport';
 import type { DocumentManager } from '@dicsussion/core/crdt';
+import type { BlobRef } from './blob-service.js';
 import type { MessagePayload } from './message-codec.js';
 import type { OutboxManager } from './outbox.js';
 import { currentEpoch } from './outbox.js';
@@ -248,6 +249,7 @@ export class ChatService {
       channelId: options.channelId,
       authorDid,
       content: options.content,
+      attachments: options.attachments,
       timestamp,
       messageIndex,
       nullifierHash,
@@ -270,6 +272,7 @@ export class ChatService {
       authorDid,
       nullifierHash,
       content: options.content,
+      attachments: options.attachments,
       timestamp,
       verifiedTier: 0,
       proofEpoch: currentEpoch(),
@@ -410,6 +413,7 @@ export class ChatService {
         authorDid: m.authorDid,
         nullifierHash: m.nullifierHash,
         content: m.content,
+        attachments: parseAttachments(m.attachments),
         timestamp: m.timestamp,
         verifiedTier: 0,
         proofEpoch: Math.floor(m.timestamp / 10),
@@ -485,6 +489,7 @@ export class ChatService {
       authorDid: payload.authorDid,
       nullifierHash: payload.nullifierHash,
       content: payload.content,
+      attachments: payload.attachments,
       timestamp: payload.timestamp,
       verifiedTier: 0,
       proofEpoch: Math.floor(payload.timestamp / 10),
@@ -631,6 +636,9 @@ export class ChatService {
       authorDid: payload.authorDid,
       nullifierHash: payload.nullifierHash,
       content: payload.content,
+      attachments: payload.attachments
+        ? JSON.stringify(payload.attachments)
+        : undefined,
       timestamp: payload.timestamp,
       messageIndex: payload.messageIndex,
       zkEnvelopeRef: payload.id,
@@ -644,5 +652,23 @@ export class ChatService {
       );
     }
     return this.deps;
+  }
+}
+
+/**
+ * Read attachment handles back out of a stored message.
+ *
+ * A message written before attachments existed has none, and a
+ * malformed value yields none rather than throwing — one bad row must
+ * not make an entire conversation unreadable.
+ */
+function parseAttachments(raw: unknown): readonly BlobRef[] | undefined {
+  if (typeof raw !== 'string' || raw.length === 0) return undefined;
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as BlobRef[]) : undefined;
+  } catch {
+    return undefined;
   }
 }

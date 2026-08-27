@@ -27,8 +27,15 @@ import {
 import { StorageCollections } from './types.js';
 import type { IStorageDriver } from './types.js';
 
-/** Schema version; bump when the object-store set changes. */
-export const INDEXEDDB_SCHEMA_VERSION = 1;
+/**
+ * Schema version; bump when the object-store set changes.
+ *
+ * 2 added `peer_profiles` and `blobs`. Without the bump
+ * `onupgradeneeded` never fires for an existing database, so those
+ * stores are missing and every read of them throws — on upgraded
+ * installs only, never on a fresh one.
+ */
+export const INDEXEDDB_SCHEMA_VERSION = 2;
 
 /** Default database name. */
 export const DEFAULT_DATABASE_NAME = 'dicsussion';

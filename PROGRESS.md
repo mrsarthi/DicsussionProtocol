@@ -943,18 +943,77 @@ the wire behaviour between versions is not.
 
 ---
 
+## Task: 0.7.0 — profiles and media (SDK-REQUESTS #2 and #3)
+
+### Profiles (Stream `0x08`)
+A name, bio and picture, as a **single-writer mutable record** rather
+than a message. Sent as tagged chat it would have to be filtered out of
+every view forever, any client not knowing the convention would render
+the tag as text, and each new avatar would sit in message history
+permanently on both devices.
+
+`identity.setMyProfile` / `getPeerProfile` / `onPeerProfile`. Paired
+peers only in both directions — a ticket is shareable, so dialling one
+must not disclose who is behind it. Accepting a connected stranger
+delivers it without a redial. 256KB avatar cap enforced on receive as
+well as send, so a modified build cannot write a 12MB row into a
+contact's database. A frame is ignored unless strictly newer, which stops
+a replayed one reverting a name.
+
+The display name is deliberately not authoritative — it is what a peer
+calls themselves, not what the local user calls them.
+
+### Blobs (Stream `0x09`)
+Content-addressed transfer, separate from the message referencing it.
+`blobs.put/get/has/delete/onProgress`, `sendMessage({ attachments })`.
+Request/chunk/unavailable, requests carry an offset so an interrupted
+transfer resumes. 64MB cap. Three distinguishable errors, because
+"could not attach that" is not something an app can say to a person.
+
+Any paired peer holding the bytes may serve them, not only the sender —
+in a group the first person to open a picture becomes a second source,
+and the sender is frequently offline. A partial copy is never served on:
+a truncated transfer is indistinguishable to the requester from a
+complete one.
+
+**No garbage collection**, decided rather than skipped. A peer that has
+not synced yet holds references this node cannot see, so collecting on
+their behalf discards data still in use. Deletion is explicit.
+
+### The bug the local tests could not see, again
+`encodePayload` names its fields explicitly, so `attachments` was dropped
+on the wire while every test still passed — the CRDT carried it
+separately, and the assertion that "a handle travels with the message"
+was in fact watching it arrive by document sync. It surfaced only
+because a *second* test checked history after a sync, where the peer's
+attachment-less write of the same message id overwrote the sender's copy.
+
+Same shape as the `0x07` bug one release earlier: a field added to a
+structure and not to the encoder that serialises it. There is now a
+round-trip test on the envelope specifically.
+
+### A quadratic write, found by a slow test
+Partial transfers were persisted on every chunk, and each write rewrote
+the whole accumulated buffer — some 8GB through the disk for a 64MB
+blob. Now checkpointed once, when a transfer gives up, which is the only
+moment resumption needs it. The stall timeout is a dep rather than a
+constant; the tests that exercise a dead link took a minute purely
+waiting for it.
+
+---
+
 ## Current State (2026-08-25)
 
 | | |
 |---|---|
-| Version | **0.6.0**, both packages |
-| Tests | **552 passing, 0 failing** |
+| Version | **0.7.0**, both packages |
+| Tests | **602 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | 0.5.0 on npm; **0.6.0 pending** |
+| Published | 0.6.0 on npm; **0.7.0 pending** |
 | Docs | `HOW_TO_USE.md` + a README on each package |
 
 **Test suites:** 11 e2e, 14 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT, plus

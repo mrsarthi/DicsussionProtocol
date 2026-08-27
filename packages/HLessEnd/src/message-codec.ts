@@ -14,6 +14,7 @@ import { decrypt, encrypt } from '@dicsussion/core/crypto';
 import { deserializeEnvelope, serializeEnvelope } from '@dicsussion/core/crypto';
 import type { SecurityEnvelope } from '@dicsussion/core/crypto';
 import { PROTOCOL_VERSION } from '@dicsussion/core/crypto';
+import type { BlobRef } from './blob-service.js';
 import type { WireProof } from './proof-service.js';
 
 /** The plaintext body carried inside an envelope. */
@@ -23,6 +24,14 @@ export interface MessagePayload {
   /** Author's did:key, or undefined in anonymous RLN channels. */
   readonly authorDid?: string;
   readonly content: string;
+  /**
+   * Blob handles referenced by this message (Stream `0x09`).
+   *
+   * Only the handles travel with the message. The bytes are fetched when
+   * a recipient actually wants them, so a picture nobody opens never
+   * crosses the wire and never enters the conversation document.
+   */
+  readonly attachments?: readonly BlobRef[];
   /** Unix timestamp in seconds. */
   readonly timestamp: number;
   /**
@@ -88,6 +97,7 @@ export function encodePayload(payload: MessagePayload): Uint8Array {
       channelId: payload.channelId,
       authorDid: payload.authorDid ?? null,
       content: payload.content,
+      attachments: payload.attachments ?? null,
       timestamp: payload.timestamp,
       messageIndex: payload.messageIndex,
       nullifierHash: payload.nullifierHash ?? null,
@@ -95,6 +105,53 @@ export function encodePayload(payload: MessagePayload): Uint8Array {
       zkProof: payload.zkProof ?? null,
     }),
   );
+}
+
+/**
+ * Most blob handles one message may carry.
+ *
+ * Each is only a hash, a size and a mime type, but they arrive from a
+ * peer and are written into the conversation document, so the count is
+ * bounded rather than trusted.
+ */
+const MAX_ATTACHMENTS = 32;
+
+/** Longest mime type accepted on an attachment handle. */
+const MAX_MIME_LENGTH = 128;
+
+/**
+ * Validate attachment handles arriving from a peer.
+ *
+ * Anything malformed yields no attachments rather than throwing: a bad
+ * handle should cost the picture, not the sentence it came with.
+ */
+function parseAttachments(raw: unknown): readonly BlobRef[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  if (raw.length > MAX_ATTACHMENTS) return undefined;
+
+  const refs: BlobRef[] = [];
+
+  for (const entry of raw as Record<string, unknown>[]) {
+    if (typeof entry !== 'object' || entry === null) return undefined;
+
+    const { hash, size, mime } = entry;
+
+    // A hash is what the blob layer looks content up by, so a value that
+    // is not one has nothing to find and no business being stored.
+    if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
+      return undefined;
+    }
+    if (typeof size !== 'number' || !Number.isInteger(size) || size < 0) {
+      return undefined;
+    }
+    if (typeof mime !== 'string' || mime.length > MAX_MIME_LENGTH) {
+      return undefined;
+    }
+
+    refs.push({ hash, size, mime });
+  }
+
+  return refs;
 }
 
 /**
@@ -137,6 +194,7 @@ export function decodePayload(bytes: Uint8Array): MessagePayload {
   }
 
   const authorDid = raw['authorDid'];
+  const attachments = parseAttachments(raw['attachments']);
   const messageIndex = raw['messageIndex'];
   const nullifierHash = raw['nullifierHash'];
   const share = raw['rlnShare'] as { x?: unknown; y?: unknown } | null;
@@ -149,6 +207,7 @@ export function decodePayload(bytes: Uint8Array): MessagePayload {
     channelId: raw['channelId'],
     authorDid: typeof authorDid === 'string' ? authorDid : undefined,
     content: raw['content'],
+    attachments,
     timestamp: raw['timestamp'],
     messageIndex: typeof messageIndex === 'number' ? messageIndex : 0,
     nullifierHash: typeof nullifierHash === 'string' ? nullifierHash : undefined,
@@ -209,22 +268,24 @@ export function sealMessage(
 }
 
 /**
- * Seal an opaque payload for Stream `0x07`.
+ * Seal arbitrary bytes for a stream that carries no `MessagePayload`.
  *
- * Reuses the message envelope so ephemeral traffic is indistinguishable
- * on the wire from ordinary chat: a relay or observer counting frame
- * shapes should not be able to tell a typing indicator from a sentence.
+ * Used by `0x07` (ephemeral), `0x08` (profiles) and `0x09` (blobs).
+ * Reuses the message envelope so none of them is distinguishable on the
+ * wire from ordinary chat: a relay or observer counting frame shapes
+ * should not be able to tell a typing indicator, an avatar and a
+ * sentence apart.
  *
- * The payload is arbitrary bytes rather than a `MessagePayload` — what a
- * presence ping or a read receipt contains is the application's
- * business, and giving it a schema here would mean revising the protocol
- * every time an application invents a new signal.
+ * The payload stays opaque here. What a presence ping contains is the
+ * application's business, and a profile or blob frame carries its own
+ * structure — decoding either at this layer would mean one function
+ * that has to know about all three.
  *
- * @param payload Opaque application bytes.
+ * @param payload Opaque bytes.
  * @param sessionKey The connection's forward-secret session key.
  * @param epoch Current RLN epoch, for envelope parity with `0x02`.
  */
-export function sealEphemeral(
+export function sealOpaque(
   payload: Uint8Array,
   sessionKey: Uint8Array,
   epoch: number,
@@ -246,11 +307,11 @@ export function sealEphemeral(
 }
 
 /**
- * Decrypt an inbound Stream `0x07` payload.
+ * Decrypt bytes sealed by `sealOpaque`.
  *
  * @throws If the envelope is malformed or authentication fails.
  */
-export function openEphemeral(
+export function openOpaque(
   bytes: Uint8Array,
   sessionKey: Uint8Array,
 ): Uint8Array {

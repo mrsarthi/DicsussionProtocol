@@ -33,6 +33,18 @@ export interface ChatMessage {
   zkProof?: string;
   rlnNullifier?: string;
   zkEnvelopeRef?: string;
+  /**
+   * Blob handles this message refers to (Stream `0x09`).
+   *
+   * Handles only. The bytes live outside the document, which is the
+   * point: a picture inlined here would be replicated to everyone in the
+   * conversation and kept forever, whether or not anyone opened it.
+   *
+   * Serialized rather than structured, because Automerge would otherwise
+   * treat each handle as a nested map and merge two devices' edits field
+   * by field — producing a reference to a blob neither of them has.
+   */
+  attachments?: string;
   [key: string]: unknown;
 }
 

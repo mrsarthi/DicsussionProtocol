@@ -71,7 +71,7 @@ the connection. Skip the middle one and the message goes nowhere — see
 the next two sections for why each exists.
 
 `init()` defaults to the in-process `local` transport, which needs no
-native module and no network. Section 8 covers real ones.
+native module and no network. Section 9 covers real ones.
 
 ---
 
@@ -298,7 +298,95 @@ gone.
 
 ---
 
-## 7. Tickets are not ready the instant you have one
+## 7. Names, pictures, and files
+
+### What a person calls themselves
+
+Until you set one, a contact's name is whatever **you** typed when you
+added them. The other person has no way to tell you what they are called.
+
+```ts
+await client.identity.setMyProfile({ displayName: 'Alice', bio: 'Hi' });
+await client.identity.setMyProfile({
+  avatar: { mime: 'image/png', bytes },   // 256KB cap
+});
+
+client.identity.getPeerProfile(theirDid);
+client.identity.onPeerProfile((did, profile) => { /* redraw */ });
+```
+
+Omitted fields are kept, so setting a bio does not erase a picture; pass
+`null` to clear one. A profile is one current value, not a history —
+updating a picture replaces it.
+
+Paired peers only, in both directions. A ticket is shareable, so someone
+who dials one has not thereby earned your name and face. Accepting a
+peer who is already connected delivers it immediately; no redial.
+
+> **The name is theirs, not yours.** It is what that person calls
+> themselves. If your app lets a user rename a contact, that name should
+> win — otherwise anyone can change what they are called in someone
+> else's contact list.
+
+### Images and files
+
+```ts
+const ref = await client.blobs.put(bytes, 'image/png');   // 64MB cap
+
+await client.chat.sendMessage({
+  channelId: 'the-group',
+  content: 'look at this',
+  attachments: [ref],
+});
+```
+
+The message carries a **handle** — a hash, a size, a media type — and
+nothing else. The bytes stay put until someone asks:
+
+```ts
+client.chat.onMessage('the-group', async (message) => {
+  for (const ref of message.attachments ?? []) {
+    const bytes = await client.blobs.get(ref);
+  }
+});
+```
+
+The alternative is base64 in the message body, which is a third larger
+than the file, enters the conversation document permanently, loads whole
+into memory on both sides, and cannot be deleted afterwards. A handful of
+phone photos would outweigh every sentence in a conversation, forever.
+
+Blobs are named by the hash of their content. The same file is stored
+once however many times it arrives, and a recipient can tell whether what
+arrived is what was sent. Anyone connected who has the bytes can serve
+them — in a group the first person to open a picture becomes a second
+source, which matters because the person who sent it is frequently
+offline.
+
+```ts
+client.blobs.onProgress(ref, (received, total) => { /* a bar */ });
+```
+
+An interrupted transfer resumes from where it stopped rather than
+starting again.
+
+**Failures are distinguishable on purpose.** "Could not attach that" is
+not something an app can put in front of a person:
+
+| Error | What happened | What to say |
+| :--- | :--- | :--- |
+| `BlobTooLargeError` | Over the 64MB cap | "That file is too big" |
+| `BlobUnavailableError` | Nobody reachable has it | "Not available — try later" |
+| `BlobCorruptError` | Bytes did not match the hash | "Download failed, retry" |
+
+Blobs are **not** deleted when the message referencing them is. A peer
+who has not synced yet holds references this device cannot see, so
+deleting on their behalf would discard something still in use. Call
+`client.blobs.delete(ref)` when you mean it.
+
+---
+
+## 8. Tickets are not ready the instant you have one
 
 A ticket carries the addresses a peer will dial. Discovery is not
 instant: the socket binds immediately, but a public address arrives from
@@ -327,7 +415,7 @@ derpRelay:       "https://euc1-1.relay.n0.iroh.link./"
 
 ---
 
-## 8. Choosing storage and transport
+## 9. Choosing storage and transport
 
 Both are chosen for the host you are running in. Getting either wrong
 fails at startup, loudly, which is the easy case.
@@ -383,7 +471,7 @@ Writing `pipe` is covered in
 
 ---
 
-## 9. Sending and receiving
+## 10. Sending and receiving
 
 ```ts
 await client.chat.sendMessage({ channelId: 'general', content: 'hello' });
@@ -406,7 +494,7 @@ reconnect. A resolved `sendMessage` means *accepted locally*, not
 
 ---
 
-## 10. What this does not do yet
+## 11. What this does not do yet
 
 Stated plainly, because the alternative is you finding out later.
 
@@ -432,7 +520,7 @@ Identity recovery *is* supported: `identity.exportMnemonic()` and
 
 ---
 
-## 11. Further reading
+## 12. Further reading
 
 - [`packages/HLessEnd/README.md`](packages/HLessEnd/README.md) — SDK
 - [`packages/core/README.md`](packages/core/README.md) — engine, custom transports

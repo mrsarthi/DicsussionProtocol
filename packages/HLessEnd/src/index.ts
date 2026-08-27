@@ -66,6 +66,22 @@ export type {
   SendMessageOptions,
 } from './types.js';
 
+export type { BlobRef } from './blob-service.js';
+export {
+  BLOB_CHUNK_BYTES,
+  BlobCorruptError,
+  BlobTooLargeError,
+  BlobUnavailableError,
+  MAX_BLOB_BYTES,
+} from './blob-service.js';
+export type { PeerProfile, ProfileUpdate } from './profile-service.js';
+export {
+  MAX_AVATAR_BYTES,
+  MAX_BIO_LENGTH,
+  MAX_DISPLAY_NAME_LENGTH,
+  ProfileTooLargeError,
+} from './profile-service.js';
+
 /**
  * Ticket helpers, re-exported for convenience.
  *

@@ -49,6 +49,11 @@ export const STREAM_PRIORITY: Record<number, number> = {
   // was announcing has cost nothing, and these are the one stream whose
   // contents nobody can ask for again.
   [StreamType.EPHEMERAL]: 10,
+  // Below chat: a profile picture arriving a moment after the sentence
+  // that prompted someone to look at it costs nothing, and a bulk blob
+  // transfer must never delay the conversation carrying it.
+  [StreamType.PROFILE]: 15,
+  [StreamType.BLOB]: 5,
 };
 
 /** Bytes requested per read. Frames are reassembled, so this is a hint. */

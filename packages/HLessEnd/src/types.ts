@@ -5,6 +5,8 @@
  * per RFC 004 §7.
  */
 
+import type { BlobRef } from './blob-service.js';
+
 /** SDK initialization configuration. */
 export interface ClientConfig {
   /** Path for SQLite database storage. */
@@ -129,6 +131,13 @@ export interface SendMessageOptions {
   readonly channelId: string;
   readonly content: string;
   /**
+   * Blobs this message refers to, from `client.blobs.put()`.
+   *
+   * Only the handles are sent. A recipient fetches the bytes when they
+   * want them, so an attachment nobody opens never crosses the wire.
+   */
+  readonly attachments?: readonly BlobRef[];
+  /**
    * Who this conversation belongs to, as `did:key`s.
    *
    * Used only when the channel does not exist yet — the first message
@@ -159,6 +168,8 @@ export interface SdkChatMessage {
   readonly authorDid?: string;
   readonly nullifierHash?: string;
   readonly content: string;
+  /** Blob handles this message refers to; fetch with `client.blobs.get()`. */
+  readonly attachments?: readonly BlobRef[];
   readonly timestamp: number;
   readonly verifiedTier: number;
   readonly proofEpoch: number;

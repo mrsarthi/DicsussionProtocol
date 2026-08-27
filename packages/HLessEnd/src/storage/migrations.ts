@@ -185,6 +185,44 @@ export const migrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 6,
+    description: 'Peer profiles and content-addressed blobs',
+    up: (db) => {
+      // One row per peer, replaced rather than appended: a new avatar
+      // supersedes the old one instead of joining a list. `updated_at`
+      // is the author's clock and the only thing ordering two versions
+      // of the same profile — see `ProfileService`.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS peer_profiles (
+          did TEXT PRIMARY KEY,
+          display_name TEXT,
+          bio TEXT,
+          avatar_mime TEXT,
+          avatar BLOB,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+
+      // Blobs are keyed by the hash of their content, so the same file
+      // sent twice is stored once and a tampered byte cannot masquerade
+      // as the original.
+      //
+      // `received` tracks a partial transfer: below `size` the row is an
+      // unfinished download that a later request resumes from, rather
+      // than restarting. A complete blob has received = size.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS blobs (
+          hash TEXT PRIMARY KEY,
+          mime TEXT NOT NULL,
+          size INTEGER NOT NULL,
+          received INTEGER NOT NULL DEFAULT 0,
+          bytes BLOB NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 /**

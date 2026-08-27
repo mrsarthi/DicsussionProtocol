@@ -148,7 +148,10 @@ entries per day, per device.
 
 ```ts
 await client.chat.sendEphemeral(channelId, payload);   // Uint8Array
-client.chat.onEphemeral(channelId, (fromDid, payload) => {});
+client.chat.onEphemeral(channelId, (fromDid, payload) => {})
+await client.chat.sendMessage({ channelId, content, attachments })
+await client.blobs.put(bytes, mime)      // → BlobRef
+await client.blobs.get(ref)              // → Uint8Array;
 ```
 
 Not stored, not queued, not retried, not replayed. Returns how many peers
@@ -164,6 +167,71 @@ client.onPeerDisconnected.on('peer', ({ peerDid, at }) => {});
 ```
 
 A green dot driven by connection alone switches on and never off.
+
+## Names and pictures
+
+What a peer calls themselves, kept as one current value rather than a
+history. Not a message: sent as tagged chat it would have to be filtered
+out of every view forever, and each new avatar would sit in message
+history permanently on both devices.
+
+```ts
+await client.identity.setMyProfile({ displayName: 'Alice', bio: 'Hi' });
+await client.identity.setMyProfile({
+  avatar: { mime: 'image/png', bytes },   // 256KB cap
+});
+
+client.identity.getPeerProfile(theirDid);          // PeerProfile | undefined
+client.identity.onPeerProfile((did, profile) => {});
+```
+
+Omitted fields are kept; pass `null` to clear one. Paired peers only, in
+both directions — a ticket is shareable, so dialling one is not consent
+to learn who is on the other end. Reaches connected peers immediately and
+the rest when they next connect.
+
+**The name is theirs, not yours.** It is what that person calls
+themselves, which is not necessarily what your user should see. If your
+app keeps local nicknames, prefer them.
+
+## Images and files
+
+```ts
+const ref = await client.blobs.put(bytes, 'image/png');   // 64MB cap
+await client.chat.sendMessage({ channelId, content: 'look', attachments: [ref] });
+
+// On the other side:
+client.chat.onMessage(channelId, async (message) => {
+  for (const ref of message.attachments ?? []) {
+    const bytes = await client.blobs.get(ref);
+  }
+});
+```
+
+The message carries only a handle — a hash, a size, a media type. Bytes
+move when someone asks, so an attachment nobody opens never crosses the
+wire and never enters the conversation document. Base64 in a message body
+is the alternative: a third larger, permanent, and loaded whole into
+memory on both sides.
+
+Blobs are named by the hash of their content, so the same file is stored
+once however often it arrives, and what arrives is checked against what
+was asked for. Anyone connected who has the bytes can serve them, which
+matters because the original sender is often offline.
+
+```ts
+client.blobs.onProgress(ref, (received, total) => {});
+await client.blobs.has(ref);
+await client.blobs.delete(ref);
+```
+
+An interrupted transfer resumes from where it stopped. Failures are
+distinguishable, because "could not attach that" is not something an app
+can phrase for a person: `BlobTooLargeError`, `BlobUnavailableError`
+(nobody reachable has it — retry later), `BlobCorruptError`.
+
+Blobs are **not** deleted when the message referencing them is. A peer
+who has not synced yet holds references this device cannot see.
 
 ## Storage and transport are chosen for the host
 
@@ -227,6 +295,9 @@ await client.chat.getHistory(channelId)
 client.getNetworkStatus()        // { connected, peerCount, relayActive, … }
 client.onNetworkStatus.on('status', (s) => {})
 client.onPeerDisconnected.on('peer', ({ peerDid, at }) => {})
+await client.identity.setMyProfile({ displayName, bio, avatar })
+client.identity.getPeerProfile(did)
+client.identity.onPeerProfile((did, profile) => {})
 await client.identity.exportMnemonic()
 await client.disconnect()
 ```
