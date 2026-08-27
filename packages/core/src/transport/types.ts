@@ -21,6 +21,25 @@ export const StreamType = {
   RLN_SIGNAL: 0x05,
   /** RLN Polynomial Share Exchange */
   RLN_SHARE_EXCHANGE: 0x06,
+  /**
+   * Ephemeral payloads — delivered, never stored.
+   *
+   * Presence, typing indicators and read receipts are all the same
+   * shape: a signal that is only meaningful while both peers are
+   * connected, and worthless afterwards. Carrying them as ordinary
+   * messages would work and would grow the channel document forever — a
+   * heartbeat every thirty seconds is a few thousand permanent entries
+   * per conversation per day, replicated to every participant and
+   * checkpointed to disk.
+   *
+   * Frames here are sealed exactly like `0x02` and subject to the same
+   * membership rules, but never reach the CRDT and never enter the
+   * outbox: a peer that is not connected simply does not receive one.
+   *
+   * Added after `0x06`, so a peer built before this existed drops the
+   * frame rather than failing on it (RFC 001 §7).
+   */
+  EPHEMERAL: 0x07,
 } as const;
 
 export type StreamTypeValue = (typeof StreamType)[keyof typeof StreamType];
@@ -155,6 +174,17 @@ export interface HandshakeInit {
    * the traffic.
    */
   readonly ephemeralKey: Uint8Array;
+  /**
+   * How many sub-streams the initiator is about to open.
+   *
+   * The responder accepts exactly this many. Without it the responder
+   * would have to assume a count, and assuming one too high leaves it
+   * waiting forever on a stream that is never opened — the connection
+   * silently never surfaces while the initiator believes it is
+   * connected. Optional because peers built before this field existed
+   * do not send it; see `LEGACY_SUB_STREAM_COUNT`.
+   */
+  readonly subStreams?: number;
 }
 
 export interface HandshakeChallenge {

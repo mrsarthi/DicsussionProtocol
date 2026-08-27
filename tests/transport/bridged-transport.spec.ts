@@ -260,25 +260,21 @@ for (const chunking of CHUNKINGS) {
       await bob.close();
     });
 
-    test('all six sub-streams multiplex over one pipe', async () => {
+    test('every sub-stream multiplexes over one pipe', async () => {
       const { alice, bob, dialed, accepted } = await connectedPair(chunking);
 
+      // Counted from StreamType, not listed: a hand-kept list silently
+      // stops covering a stream type the day one is added.
+      const streams = Object.values(StreamType);
       const seen = new Map<number, string>();
       const done = new Promise<void>((resolve) => {
         accepted.onFrame((frame) => {
           seen.set(frame.header.streamType, new TextDecoder().decode(frame.payload));
-          if (seen.size === 6) resolve();
+          if (seen.size === streams.length) resolve();
         });
       });
 
-      for (const streamType of [
-        StreamType.CRDT_SYNC,
-        StreamType.E2EE_MESSAGE,
-        StreamType.REVOCATION_GOSSIP,
-        StreamType.VOUCHER_HANDSHAKE,
-        StreamType.RLN_SIGNAL,
-        StreamType.RLN_SHARE_EXCHANGE,
-      ]) {
+      for (const streamType of streams) {
         await dialed.send(streamType, new TextEncoder().encode(`s${streamType}`));
       }
 

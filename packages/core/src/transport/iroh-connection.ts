@@ -1,7 +1,7 @@
 /**
  * @dicsussion/transport — Iroh QUIC Connection
  *
- * Maps RFC 001 §6's six sub-streams onto six long-lived bidirectional
+ * Maps each RFC 001 §6 sub-stream onto a long-lived bidirectional
  * QUIC streams, one per stream type.
  *
  * WHY SIX STREAMS RATHER THAN ONE: a single multiplexed stream would
@@ -45,6 +45,10 @@ export const STREAM_PRIORITY: Record<number, number> = {
   [StreamType.CRDT_SYNC]: 40,
   [StreamType.RLN_SIGNAL]: 30,
   [StreamType.E2EE_MESSAGE]: 20,
+  // Lowest: a typing indicator that loses a race with the message it
+  // was announcing has cost nothing, and these are the one stream whose
+  // contents nobody can ask for again.
+  [StreamType.EPHEMERAL]: 10,
 };
 
 /** Bytes requested per read. Frames are reassembled, so this is a hint. */
@@ -85,6 +89,29 @@ interface SubStream {
  * A live QUIC connection to one peer.
  */
 export class IrohConnection implements IConnection {
+  /** Fires once when the connection ends, from either side. */
+  private readonly closeHandlers = new Set<() => void>();
+
+  onClose(handler: () => void): () => void {
+    // A connection that has already ended still answers, immediately —
+    // a listener registered a tick late would otherwise wait forever for
+    // an event that has been and gone.
+    if (this._state === ConnectionState.Disconnected) {
+      handler();
+      return () => {};
+    }
+
+    this.closeHandlers.add(handler);
+    return () => this.closeHandlers.delete(handler);
+  }
+
+  /** Notify once, then forget: close is not a repeating event. */
+  private notifyClosed(): void {
+    const handlers = [...this.closeHandlers];
+    this.closeHandlers.clear();
+    for (const handler of handlers) handler();
+  }
+
   private readonly frameEmitter = new Emitter<{ frame: [Frame] }>();
   private readonly streams = new Map<number, SubStream>();
   private _state: ConnectionState = ConnectionState.Active;
@@ -174,6 +201,7 @@ export class IrohConnection implements IConnection {
     if (this._state === ConnectionState.Disconnected) return;
 
     this._state = ConnectionState.Disconnected;
+    this.notifyClosed();
     this.streams.clear();
     this.frameEmitter.removeAllListeners();
 

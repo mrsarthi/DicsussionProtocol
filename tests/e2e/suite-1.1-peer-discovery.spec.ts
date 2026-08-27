@@ -4,7 +4,7 @@
  * Orchestrates two headless peer instances and verifies:
  *   - local mDNS discovery over `_p2p-sync._udp.local` (RFC 001 §4.1)
  *   - the mutually authenticated QUIC-stream handshake (RFC 001 §5)
- *   - sub-stream multiplexing across all six stream types (RFC 001 §6)
+ *   - sub-stream multiplexing across every stream type (RFC 001 §6)
  *   - DERP relay failover when hole-punching times out (RFC 001 §4.2)
  *
  * Discovery runs over an in-process datagram bus rather than real
@@ -195,7 +195,7 @@ test.describe('Suite 1.1 — Peer Discovery & Transport', () => {
     }
   });
 
-  test('all six sub-streams multiplex over one connection', async () => {
+  test('every sub-stream multiplexes over one connection', async () => {
     const keypairA = generateKeypair();
     const keypairB = generateKeypair();
 
@@ -214,14 +214,9 @@ test.describe('Suite 1.1 — Peer Discovery & Transport', () => {
         directAddresses: [],
       });
 
-      const streams = [
-        StreamType.CRDT_SYNC,
-        StreamType.E2EE_MESSAGE,
-        StreamType.REVOCATION_GOSSIP,
-        StreamType.VOUCHER_HANDSHAKE,
-        StreamType.RLN_SIGNAL,
-        StreamType.RLN_SHARE_EXCHANGE,
-      ];
+      // Every declared type, not a hand-kept list — a list drifts out of
+      // date silently the moment a stream type is added.
+      const streams = Object.values(StreamType);
 
       for (const streamType of streams) {
         await connection.send(streamType, new Uint8Array([streamType, 0xaa]));

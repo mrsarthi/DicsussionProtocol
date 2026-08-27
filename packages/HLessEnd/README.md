@@ -139,6 +139,32 @@ all survive because each occupies its own slot.
 
 A message may arrive twice, directly and via a relay. You are told once.
 
+## Signals that should not be stored
+
+Presence, typing and read receipts are true only while both peers are
+connected. Sent as ordinary messages they would grow the conversation
+forever — a heartbeat every thirty seconds is thousands of permanent
+entries per day, per device.
+
+```ts
+await client.chat.sendEphemeral(channelId, payload);   // Uint8Array
+client.chat.onEphemeral(channelId, (fromDid, payload) => {});
+```
+
+Not stored, not queued, not retried, not replayed. Returns how many peers
+received it; **zero is normal**, meaning nobody was connected. Encrypted
+and gated by conversation membership like any message — "X is typing" is
+still a disclosure.
+
+Pair it with both connection events:
+
+```ts
+client.onPeerConnected.on('peer', ({ peerDid, paired, direction }) => {});
+client.onPeerDisconnected.on('peer', ({ peerDid, at }) => {});
+```
+
+A green dot driven by connection alone switches on and never off.
+
 ## Storage and transport are chosen for the host
 
 | Host | Storage | Transport |
@@ -194,10 +220,13 @@ await client.connect(ticket)
 
 await client.chat.sendMessage({ channelId, content })
 client.chat.onMessage(channelId, (message) => {})
+await client.chat.sendEphemeral(channelId, payload)
+client.chat.onEphemeral(channelId, (fromDid, payload) => {})
 await client.chat.getHistory(channelId)
 
 client.getNetworkStatus()        // { connected, peerCount, relayActive, … }
 client.onNetworkStatus.on('status', (s) => {})
+client.onPeerDisconnected.on('peer', ({ peerDid, at }) => {})
 await client.identity.exportMnemonic()
 await client.disconnect()
 ```

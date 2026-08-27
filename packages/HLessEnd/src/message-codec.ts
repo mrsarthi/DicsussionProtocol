@@ -208,6 +208,57 @@ export function sealMessage(
   return serializeEnvelope(envelope);
 }
 
+/**
+ * Seal an opaque payload for Stream `0x07`.
+ *
+ * Reuses the message envelope so ephemeral traffic is indistinguishable
+ * on the wire from ordinary chat: a relay or observer counting frame
+ * shapes should not be able to tell a typing indicator from a sentence.
+ *
+ * The payload is arbitrary bytes rather than a `MessagePayload` — what a
+ * presence ping or a read receipt contains is the application's
+ * business, and giving it a schema here would mean revising the protocol
+ * every time an application invents a new signal.
+ *
+ * @param payload Opaque application bytes.
+ * @param sessionKey The connection's forward-secret session key.
+ * @param epoch Current RLN epoch, for envelope parity with `0x02`.
+ */
+export function sealEphemeral(
+  payload: Uint8Array,
+  sessionKey: Uint8Array,
+  epoch: number,
+): Uint8Array {
+  const encrypted = encrypt(payload, sessionKey);
+
+  const envelope: SecurityEnvelope = {
+    version: PROTOCOL_VERSION,
+    epoch,
+    tierThreshold: 0,
+    rlnNullifier: new Uint8Array(32),
+    zkProof: new Uint8Array(0),
+    ephemeralPubkey: new Uint8Array(32),
+    nonce: encrypted.nonce,
+    ciphertext: encrypted.ciphertext,
+  };
+
+  return serializeEnvelope(envelope);
+}
+
+/**
+ * Decrypt an inbound Stream `0x07` payload.
+ *
+ * @throws If the envelope is malformed or authentication fails.
+ */
+export function openEphemeral(
+  bytes: Uint8Array,
+  sessionKey: Uint8Array,
+): Uint8Array {
+  const envelope = deserializeEnvelope(bytes);
+
+  return decrypt(envelope.ciphertext, envelope.nonce, sessionKey);
+}
+
 /** A decrypted message plus the envelope metadata it arrived with. */
 export interface OpenedMessage {
   readonly payload: MessagePayload;

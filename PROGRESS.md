@@ -153,7 +153,7 @@ packages/HLessEnd/src/
 - [x] **Test Suite 1.1 (`tests/e2e/suite-1.1-peer-discovery.spec.ts`)** — 10 tests.
   Two headless peers discover each other over mDNS; stale peers evicted on TTL;
   foreign/malformed datagrams ignored; mutually authenticated handshake with
-  clock sync; all six sub-streams multiplex over one connection; `0x03` preempts
+  clock sync; every sub-stream multiplexes over one connection; `0x03` preempts
   `0x02`; direct path preferred; failover to backup DERP relay; both exhaustion
   error paths.
 - [x] **Test Suite 1.2 (`tests/e2e/suite-1.2-e2ee-exchange.spec.ts`)** — 9 tests.
@@ -342,8 +342,8 @@ same framing in Tauri, React Native and Electron, and fails only
 mid-handshake under coalescing — so it works on loopback and breaks on a
 real network under load.
 
-**Accepted cost, documented in the module header.** One pipe carries all
-six sub-streams, so RFC 001 §6 preemption weakens from QUIC stream
+**Accepted cost, documented in the module header.** One pipe carries
+every sub-stream, so RFC 001 §6 preemption weakens from QUIC stream
 priority to send-queue ordering. Bounded by the frame ceiling, not a
 stall. `IrohTransport` keeps the stronger guarantee.
 
@@ -876,6 +876,70 @@ per-version figures give it away — superseded releases are still
 downloaded more than the current one, which is scraper behaviour, not
 adoption. Relevant here because it means a breaking change strands
 nobody, and the 0.5.0 hole has no known victims.
+
+---
+
+## Task: signals that should not be stored (SDK-REQUESTS #1)
+
+The app asked for presence, typing indicators and read receipts. All
+three are the same shape: true only while both people are connected, and
+misleading the moment they are not.
+
+They could already be built on `sendMessage`, and that is the trap. A
+thirty-second heartbeat is a few thousand permanent CRDT entries per
+conversation per day, on every participant's device, replicated and
+written to disk, for signals nobody will ever read back. The app would
+have discovered this after shipping.
+
+### What landed
+Stream `0x07`, `sendEphemeral` / `onEphemeral`, and `onPeerDisconnected`.
+Sealed under the session key and gated by channel membership exactly like
+`0x02` — "X is typing" is still a disclosure. Deliberately none of
+`sendMessage`'s guarantees: not stored, not queued, not retried, not
+replayed on reconnect. Returns the number of peers reached, and **zero is
+normal**.
+
+The payload is opaque bytes. Giving it a schema would mean revising the
+RFC every time the app invents a signal.
+
+`onPeerDisconnected` exists because presence built on connection alone
+switches on and never off — it would show "online" for someone who closed
+the app hours ago. Required a new `IConnection.onClose` across all four
+transports; `LocalTransport.close()` also had to propagate to the peer,
+since each side of an in-process pair holds its own connection object.
+
+### The bug the SDK tests could not see
+`sendEphemeral` threw `Sub-stream 0x7 is not open` over real QUIC while
+passing 8/8 in the SDK suite. `IrohTransport` opened sub-streams from a
+hand-maintained list that had not grown; `LocalTransport` opens them on
+demand. Every SDK test uses the latter.
+
+So the feature was green in its own suite and broken on every real
+network. What caught it was an unrelated e2e test that iterates
+`StreamType` — and only because it iterates rather than lists. Both
+multiplex tests now derive their counts from `StreamType`, as does
+`SUB_STREAMS` itself.
+
+### A silent hang, found while fixing that
+The responder accepted a fixed number of sub-streams. Adding a seventh
+meant a 0.7.0 responder would wait forever for a stream a 0.6.0 initiator
+never opens — `acceptBi()` is untimed, and there is no handshake timeout
+on that path. The connection is never surfaced to any handler, while the
+initiator completes its handshake and believes the peer is reachable.
+Traffic then disappears with no error on either side.
+
+Fixed by having the initiator announce `HandshakeInit.subStreams` and the
+responder accept exactly that many, treating absence as **6** — the count
+peers built before this field opened. `LEGACY_SUB_STREAM_COUNT` describes
+software already in the world, not this build, and tracking it to
+`SUB_STREAMS.length` would restore the hang; there is a test saying so,
+because the constant looks exactly like something worth tidying.
+Recorded as RFC 001 §5 constraint 5.
+
+**Not covered end to end.** No test runs a real pre-`subStreams` peer
+against a current one — that would mean reimplementing the dialer's
+handshake. The reasoning is above and the count invariants are tested;
+the wire behaviour between versions is not.
 
 ---
 

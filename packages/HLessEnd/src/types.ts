@@ -116,6 +116,14 @@ export interface PeerConnectedEvent {
   readonly direction: 'outbound' | 'inbound';
 }
 
+/** A peer's connection ended. */
+export interface PeerDisconnectedEvent {
+  /** The peer's did:key. */
+  readonly peerDid: string;
+  /** Unix seconds when the connection ended. */
+  readonly at: number;
+}
+
 /** Options for sending a message. */
 export interface SendMessageOptions {
   readonly channelId: string;

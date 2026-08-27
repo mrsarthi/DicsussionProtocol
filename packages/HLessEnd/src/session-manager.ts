@@ -18,7 +18,12 @@ import { StreamType } from '@dicsussion/core/transport';
 import type { Frame } from '@dicsussion/core/transport';
 import type { IConnection } from '@dicsussion/core/transport';
 import type { MessagePayload } from './message-codec.js';
-import { openMessage, sealMessage } from './message-codec.js';
+import {
+  openEphemeral,
+  openMessage,
+  sealEphemeral,
+  sealMessage,
+} from './message-codec.js';
 import { currentEpoch } from './outbox.js';
 import type { PeerRegistry } from './peer-registry.js';
 
@@ -44,6 +49,17 @@ export interface SessionManagerDeps {
    * decide opposite things on the inbound path.
    */
   readonly knowsChannel?: (channelId: string) => boolean;
+  /**
+   * An ephemeral payload arrived on Stream `0x07`.
+   *
+   * Never persisted and never acknowledged: if nothing is listening, it
+   * is gone.
+   */
+  readonly onEphemeral?: (
+    peerDid: string,
+    channelId: string,
+    payload: Uint8Array,
+  ) => void;
   readonly syncEngine: CrdtSyncEngine;
   /** Hand a decrypted message to the chat layer. */
   readonly onMessage: (payload: MessagePayload) => Promise<void>;
@@ -182,6 +198,43 @@ export class SessionManager {
   }
 
   /**
+   * Send an ephemeral payload to everyone currently reachable.
+   *
+   * Deliberately unlike `publish`: nothing is written locally, nothing
+   * is queued, and a peer that is not connected right now simply does
+   * not get it. That is the point — presence, typing and read receipts
+   * are only true while both ends are connected, so retrying one later
+   * would deliver a claim that has since become false.
+   *
+   * @returns How many peers it reached.
+   */
+  async publishEphemeral(channelId: string, payload: Uint8Array): Promise<number> {
+    const epoch = currentEpoch();
+    const sends: Array<Promise<void>> = [];
+
+    for (const peer of this.deps.peers.listPairedConnected()) {
+      const connection = peer.connection;
+      if (!connection) continue;
+      if (!this.deps.mayReceive?.(peer.did, channelId)) continue;
+
+      // Channel id travels with the payload rather than in a header:
+      // the frame carries only a stream type, and a receiver has to know
+      // which conversation a signal belongs to.
+      const framed = encodeEphemeral(channelId, payload);
+      sends.push(
+        connection.send(
+          StreamType.EPHEMERAL,
+          sealEphemeral(framed, connection.sessionKey, epoch),
+        ),
+      );
+    }
+
+    await Promise.all(sends);
+
+    return sends.length;
+  }
+
+  /**
    * Push a document's latest changes to everyone entitled to it.
    *
    * Reconciliation used to happen once, when a connection opened. That
@@ -239,6 +292,9 @@ export class SessionManager {
           break;
         case StreamType.E2EE_MESSAGE:
           await this.handleMessageFrame(frame, connection);
+          break;
+        case StreamType.EPHEMERAL:
+          this.handleEphemeralFrame(frame, connection);
           break;
         case StreamType.VOUCHER_HANDSHAKE:
           await this.deps.onVoucherFrame?.(frame.payload, connection);
@@ -326,6 +382,22 @@ export class SessionManager {
     return true;
   }
 
+  private handleEphemeralFrame(frame: Frame, connection: IConnection): void {
+    const opened = openEphemeral(frame.payload, connection.sessionKey);
+    const { channelId, payload } = decodeEphemeral(opened);
+
+    // Same membership rule as `0x02`. A signal is still a disclosure —
+    // that someone is present, or typing — so it is gated identically.
+    if (
+      this.deps.knowsChannel?.(channelId) &&
+      !this.deps.mayReceive?.(connection.peerDid, channelId)
+    ) {
+      return;
+    }
+
+    this.deps.onEphemeral?.(connection.peerDid, channelId, payload);
+  }
+
   private async handleMessageFrame(
     frame: Frame,
     connection: IConnection,
@@ -354,4 +426,35 @@ export class SessionManager {
 
     await this.deps.onMessage(opened.payload);
   }
+}
+
+/** Length-prefixed channel id, then the opaque payload. */
+function encodeEphemeral(channelId: string, payload: Uint8Array): Uint8Array {
+  const id = new TextEncoder().encode(channelId);
+  const out = new Uint8Array(2 + id.length + payload.length);
+
+  new DataView(out.buffer).setUint16(0, id.length, false);
+  out.set(id, 2);
+  out.set(payload, 2 + id.length);
+
+  return out;
+}
+
+function decodeEphemeral(bytes: Uint8Array): {
+  channelId: string;
+  payload: Uint8Array;
+} {
+  if (bytes.length < 2) throw new Error('Ephemeral frame is too short');
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const idLength = view.getUint16(0, false);
+
+  if (bytes.length < 2 + idLength) {
+    throw new Error('Ephemeral frame declares a channel id it does not carry');
+  }
+
+  return {
+    channelId: new TextDecoder().decode(bytes.subarray(2, 2 + idLength)),
+    payload: bytes.slice(2 + idLength),
+  };
 }

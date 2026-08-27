@@ -52,6 +52,11 @@ export interface ChatServiceDeps {
    * not directly connected to.
    */
   readonly onDocumentChanged?: (channelId: string) => void;
+  /** Send an opaque payload to reachable participants; nothing stored. */
+  readonly publishEphemeral?: (
+    channelId: string,
+    payload: Uint8Array,
+  ) => Promise<number>;
   /**
    * Derive an RLN signal for an anonymous send (RFC 003 §4.1).
    *
@@ -101,6 +106,12 @@ export class ChatService {
    * the baseline would mark it delivered before anything delivered it.
    */
   private readonly baseline = new Map<string, Set<string>>();
+
+  /** Ephemeral listeners per channel; nothing here is persisted. */
+  private readonly ephemeral = new Map<
+    string,
+    Set<(from: string, payload: Uint8Array) => void>
+  >();
   private deps: ChatServiceDeps | null = null;
 
   constructor() {
@@ -311,6 +322,60 @@ export class ChatService {
     }
 
     return message;
+  }
+
+  /**
+   * Send a payload that is delivered but never stored.
+   *
+   * Presence, typing indicators and read receipts are the same shape:
+   * true only while both peers are connected, and misleading afterwards.
+   * Sending them as ordinary messages would work and would grow the
+   * conversation forever — a heartbeat every thirty seconds is a few
+   * thousand permanent entries per day, on every participant's device.
+   *
+   * So this deliberately has none of `sendMessage`'s guarantees. It is
+   * not persisted, not queued, not retried, and not replayed to a peer
+   * who reconnects. A recipient who is not connected right now does not
+   * receive it, which is correct: a stale "typing…" is worse than none.
+   *
+   * The payload is opaque bytes. What a signal means is the
+   * application's business — giving it a schema here would mean
+   * revising the protocol whenever an application invents a new one.
+   *
+   * @param channelId Conversation the signal belongs to.
+   * @param payload Opaque application bytes.
+   * @returns How many peers received it. Zero is normal, not an error.
+   */
+  async sendEphemeral(channelId: string, payload: Uint8Array): Promise<number> {
+    const deps = this.requireDeps();
+
+    return (await deps.publishEphemeral?.(channelId, payload)) ?? 0;
+  }
+
+  /**
+   * Listen for ephemeral payloads on a channel.
+   *
+   * @returns Unsubscribe function.
+   */
+  onEphemeral(
+    channelId: string,
+    handler: (from: string, payload: Uint8Array) => void,
+  ): () => void {
+    const listeners = this.ephemeral.get(channelId) ?? new Set();
+    listeners.add(handler);
+    this.ephemeral.set(channelId, listeners);
+
+    return () => {
+      listeners.delete(handler);
+      if (listeners.size === 0) this.ephemeral.delete(channelId);
+    };
+  }
+
+  /** Deliver an inbound ephemeral payload. Called by the client. */
+  _emitEphemeral(from: string, channelId: string, payload: Uint8Array): void {
+    for (const handler of this.ephemeral.get(channelId) ?? []) {
+      handler(from, payload);
+    }
   }
 
   /**

@@ -210,6 +210,7 @@ export const STREAM_PRIORITY: Record<number, number> = {
   [StreamType.CRDT_SYNC]: 40,
   [StreamType.RLN_SIGNAL]: 30,
   [StreamType.E2EE_MESSAGE]: 20,
+  [StreamType.EPHEMERAL]: 10,
 };
 
 // ─── Stubs ───────────────────────────────────────────────────────────────

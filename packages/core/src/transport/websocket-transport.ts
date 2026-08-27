@@ -121,6 +121,29 @@ export interface WebSocketTransportOptions {
 
 /** A peer session multiplexed over the relay socket. */
 class RelayConnection implements IConnection {
+  /** Fires once when the connection ends, from either side. */
+  private readonly closeHandlers = new Set<() => void>();
+
+  onClose(handler: () => void): () => void {
+    // A connection that has already ended still answers, immediately —
+    // a listener registered a tick late would otherwise wait forever for
+    // an event that has been and gone.
+    if (this._state === ConnectionState.Disconnected) {
+      handler();
+      return () => {};
+    }
+
+    this.closeHandlers.add(handler);
+    return () => this.closeHandlers.delete(handler);
+  }
+
+  /** Notify once, then forget: close is not a repeating event. */
+  private notifyClosed(): void {
+    const handlers = [...this.closeHandlers];
+    this.closeHandlers.clear();
+    for (const handler of handlers) handler();
+  }
+
   private readonly frameEmitter = new Emitter<{ frame: [Frame, IConnection] }>();
   private readonly sendQueue = new PriorityFrameQueue();
   private _state: ConnectionState = ConnectionState.Handshaking;
@@ -131,7 +154,7 @@ class RelayConnection implements IConnection {
     public readonly clockOffset: number,
     public readonly sessionKey: Uint8Array,
     private readonly deliver: (bytes: Uint8Array) => void,
-    private readonly onClose: (peerDid: string) => void,
+    private readonly releaseFromTransport: (peerDid: string) => void,
   ) {}
 
   get state(): ConnectionState {
@@ -186,12 +209,13 @@ class RelayConnection implements IConnection {
     if (this._state === ConnectionState.Disconnected) return;
 
     this._state = ConnectionState.Disconnected;
+    this.notifyClosed();
     this.frameEmitter.removeAllListeners();
 
     // Best-effort wipe — see LocalConnection.close() for why this is not
     // a guarantee of erasure.
     this.sessionKey.fill(0);
-    this.onClose(this.peerDid);
+    this.releaseFromTransport(this.peerDid);
   }
 
   /** Close without notifying the relay — used when the socket is gone. */
@@ -199,6 +223,7 @@ class RelayConnection implements IConnection {
     if (this._state === ConnectionState.Disconnected) return;
 
     this._state = ConnectionState.Disconnected;
+    this.notifyClosed();
     this.frameEmitter.removeAllListeners();
     this.sessionKey.fill(0);
   }

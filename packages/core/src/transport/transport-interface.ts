@@ -58,6 +58,19 @@ export interface IConnection {
   onFrame(handler: FrameHandler): () => void;
 
   /**
+   * Called once when this connection ends, from either side.
+   *
+   * The transport already knows — it sets `Disconnected` and wipes the
+   * session key — but without this the layer above can only find out by
+   * asking. That is the difference between presence that goes dark when
+   * someone leaves and presence that stays lit until something else
+   * happens to look.
+   *
+   * @returns Unsubscribe function.
+   */
+  onClose(handler: () => void): () => void;
+
+  /**
    * Close the connection gracefully.
    */
   close(): Promise<void>;

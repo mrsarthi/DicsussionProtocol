@@ -62,15 +62,24 @@ interface ChallengeMessage {
 /** ALPN identifying this protocol during the QUIC handshake. */
 export const DICSUSSION_ALPN = 'dicsussion/1';
 
-/** Sub-streams opened on every connection, in RFC 001 §6 order. */
-const SUB_STREAMS: StreamTypeValue[] = [
-  StreamType.CRDT_SYNC,
-  StreamType.E2EE_MESSAGE,
-  StreamType.REVOCATION_GOSSIP,
-  StreamType.VOUCHER_HANDSHAKE,
-  StreamType.RLN_SIGNAL,
-  StreamType.RLN_SHARE_EXCHANGE,
-];
+/**
+ * Sub-streams opened on every connection, in RFC 001 §6 order.
+ *
+ * Taken from `StreamType` rather than listed by hand: a type declared but
+ * missing here is never opened, and `send` then throws "sub-stream is not
+ * open" the first time anything tries to use it — at runtime, over real
+ * QUIC only, since the in-process transport opens streams on demand.
+ */
+export const SUB_STREAMS: StreamTypeValue[] = Object.values(StreamType);
+
+/**
+ * Sub-streams opened by peers predating `HandshakeInit.subStreams`.
+ *
+ * Those peers opened the six types defined at the time and announced
+ * nothing, so a missing count means exactly six. Never change this: it
+ * describes software already built, not what this version does.
+ */
+export const LEGACY_SUB_STREAM_COUNT = 6;
 
 export interface IrohTransportOptions {
   /** This node's identity keypair; the transport key is derived from it. */
@@ -251,7 +260,11 @@ export class IrohTransport implements ITransport {
       this.identity,
       this.didKey,
     );
-    await writeJson(control, init);
+
+    // Announced here rather than in `createHandshakeInit`, because
+    // opening a stream per type is how this transport works and not how
+    // the bridged one does.
+    await writeJson(control, { ...init, subStreams: SUB_STREAMS.length });
 
     const { challenge, timestamp } = await readJson<ChallengeMessage>(control);
 
@@ -344,9 +357,17 @@ export class IrohTransport implements ITransport {
       sessionKey,
     );
 
+    // How many the initiator said it would open — not how many this
+    // build knows about. Waiting for a stream an older peer never opens
+    // would hang here forever, and the initiator would meanwhile believe
+    // the connection succeeded.
+    const expected = init.subStreams ?? LEGACY_SUB_STREAM_COUNT;
+
     // Streams may be accepted in any order, so each is identified by its
-    // tag rather than by position.
-    for (let i = 0; i < SUB_STREAMS.length; i++) {
+    // tag rather than by position. A tag this build does not recognise is
+    // still adopted: RFC 001 §7 makes unknown stream types ignorable, not
+    // fatal, and that is what lets a newer peer talk to this one.
+    for (let i = 0; i < expected; i++) {
       const stream = await handle.acceptBi();
       const tag = await readStreamTag(stream.recv);
       if (tag === undefined || tag === CONTROL_STREAM_TAG) continue;

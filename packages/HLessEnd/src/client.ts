@@ -68,6 +68,7 @@ import type {
   ClientConfig,
   NetworkStatus,
   PeerConnectedEvent,
+  PeerDisconnectedEvent,
 } from './types.js';
 
 /** A transport that knows how it is reachable and can publish a ticket. */
@@ -145,6 +146,22 @@ export class DicsussionClient {
    */
   public readonly onPeerConnected = new Emitter<{
     peer: [PeerConnectedEvent];
+  }>();
+
+  /**
+   * A peer's connection ended.
+   *
+   * The counterpart to `onPeerConnected`, and the reason presence can go
+   * dark rather than latching on. Without it an application can only
+   * learn a peer left by noticing it has stopped hearing from them,
+   * which means a green dot that stays lit for someone who closed the
+   * app hours ago.
+   *
+   * Fires once per connection, from either side, including when the
+   * local node disconnects.
+   */
+  public readonly onPeerDisconnected = new Emitter<{
+    peer: [PeerDisconnectedEvent];
   }>();
 
   private readonly outbox: OutboxManager;
@@ -237,6 +254,9 @@ export class DicsussionClient {
       mayReceive: (peerDid, channelId) =>
         this.documents.isParticipant(channelId, peerDid),
       knowsChannel: (channelId) => this.documents.hasDocument(channelId),
+      onEphemeral: (peerDid, channelId, payload) => {
+        this.chat._emitEphemeral(peerDid, channelId, payload);
+      },
       syncEngine: this.syncEngine,
       membershipSync: this.membershipSync,
       onMessage: async (payload) => {
@@ -354,6 +374,7 @@ export class DicsussionClient {
 
     const connection = await transport.connect(ticket);
     this.sessions.registerConnection(connection);
+    this.watchForClose(connection);
     this.announcePeer(connection.peerDid, 'outbound');
     await this.sessions.beginSync(connection);
     await this.drainAfterReconnect();
@@ -383,6 +404,16 @@ export class DicsussionClient {
   }
 
   /** Tell listeners a peer handshake completed, and whether it counts. */
+  /** Report a connection ending, once, to whoever is listening. */
+  private watchForClose(connection: IConnection): void {
+    connection.onClose(() => {
+      this.onPeerDisconnected.emit('peer', {
+        peerDid: connection.peerDid,
+        at: Math.floor(Date.now() / 1000),
+      });
+    });
+  }
+
   private announcePeer(
     peerDid: string,
     direction: PeerConnectedEvent['direction'],
@@ -684,6 +715,7 @@ export class DicsussionClient {
     this.online = false;
     this.onNetworkStatus.removeAllListeners();
     this.onPeerConnected.removeAllListeners();
+    this.onPeerDisconnected.removeAllListeners();
   }
 
   // ─── Bootstrap ────────────────────────────────────────────────────────
@@ -719,6 +751,7 @@ export class DicsussionClient {
       this.runtime,
       (connection) => {
         this.sessions.registerConnection(connection);
+        this.watchForClose(connection);
         this.announcePeer(connection.peerDid, 'inbound');
         void this.drainAfterReconnect();
       },
@@ -789,6 +822,8 @@ export class DicsussionClient {
       // the outbox.
       isOnline: () => this.online && this.peers.listPairedConnected().length > 0,
       publish: (payload) => this.sessions.publish(payload),
+      publishEphemeral: (channelId, payload) =>
+        this.sessions.publishEphemeral(channelId, payload),
       // Relay every local change onward. Without this a message reaches
       // only peers this node is directly connected to, so a group in any
       // shape but a full mesh splits into partial conversations.

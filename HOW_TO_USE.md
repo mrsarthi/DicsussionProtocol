@@ -71,7 +71,7 @@ the connection. Skip the middle one and the message goes nowhere — see
 the next two sections for why each exists.
 
 `init()` defaults to the in-process `local` transport, which needs no
-native module and no network. Section 7 covers real ones.
+native module and no network. Section 8 covers real ones.
 
 ---
 
@@ -249,7 +249,56 @@ SDK tells your application once.
 
 ---
 
-## 6. Tickets are not ready the instant you have one
+## 6. Signals that should not be stored
+
+Presence, typing indicators and read receipts share a shape: true only
+while both people are connected, and misleading afterwards.
+
+Sending them as ordinary messages works and is a trap. A heartbeat every
+thirty seconds is a few thousand permanent entries per conversation per
+day, on every participant's device, replicated and written to disk — for
+signals nobody will ever want to read back.
+
+```ts
+// Delivered now, or not at all.
+await client.chat.sendEphemeral('the-group', new TextEncoder().encode('typing'));
+
+client.chat.onEphemeral('the-group', (fromDid, payload) => {
+  console.log(fromDid, new TextDecoder().decode(payload));
+});
+```
+
+Deliberately none of `sendMessage`'s guarantees: **not stored, not
+queued, not retried, not replayed** to someone who reconnects. It returns
+how many peers received it, and **zero is normal** — it means nobody was
+connected, not that anything failed.
+
+The payload is opaque bytes. What a signal means is your decision; the
+protocol carries it without inspecting it. It is encrypted and gated by
+conversation membership exactly like a message, because "X is typing" is
+still a disclosure.
+
+### Knowing when someone leaves
+
+```ts
+client.onPeerConnected.on('peer', ({ peerDid }) => { /* … */ });
+client.onPeerDisconnected.on('peer', ({ peerDid, at }) => { /* … */ });
+```
+
+Both halves matter. A green dot driven by connection alone switches on
+and never off — it would show "online" for someone who closed the app
+hours ago.
+
+For presence, prefer a periodic ephemeral heartbeat over the connection
+events alone: a peer can be connected and idle, or their connection can
+drop in a way that takes time to notice. Absence of a recent heartbeat is
+the more honest signal, and it fails in the safe direction — reporting
+someone as away when they are present, rather than present when they are
+gone.
+
+---
+
+## 7. Tickets are not ready the instant you have one
 
 A ticket carries the addresses a peer will dial. Discovery is not
 instant: the socket binds immediately, but a public address arrives from
@@ -278,7 +327,7 @@ derpRelay:       "https://euc1-1.relay.n0.iroh.link./"
 
 ---
 
-## 7. Choosing storage and transport
+## 8. Choosing storage and transport
 
 Both are chosen for the host you are running in. Getting either wrong
 fails at startup, loudly, which is the easy case.
@@ -334,7 +383,7 @@ Writing `pipe` is covered in
 
 ---
 
-## 8. Sending and receiving
+## 9. Sending and receiving
 
 ```ts
 await client.chat.sendMessage({ channelId: 'general', content: 'hello' });
@@ -357,7 +406,7 @@ reconnect. A resolved `sendMessage` means *accepted locally*, not
 
 ---
 
-## 9. What this does not do yet
+## 10. What this does not do yet
 
 Stated plainly, because the alternative is you finding out later.
 
@@ -383,7 +432,7 @@ Identity recovery *is* supported: `identity.exportMnemonic()` and
 
 ---
 
-## 10. Further reading
+## 11. Further reading
 
 - [`packages/HLessEnd/README.md`](packages/HLessEnd/README.md) — SDK
 - [`packages/core/README.md`](packages/core/README.md) — engine, custom transports

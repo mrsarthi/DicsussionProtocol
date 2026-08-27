@@ -206,7 +206,7 @@ export class PeerMesh {
     }
 
     // `connect()` resolves once the *dialer* finishes its handshake, but
-    // the accepting side is still adopting six sub-streams and has not
+    // the accepting side is still adopting its sub-streams and has not
     // yet surfaced the connection. Returning here would hand back a mesh
     // that is not actually formed, so every peer must confirm it sees
     // the others first.

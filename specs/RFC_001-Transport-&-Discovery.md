@@ -3,7 +3,7 @@
 - **Target Module:** `packages/core`
 - **Status:** Draft
 - **Authors:** Parth
-- **Last Updated:** 2026-08-18
+- **Last Updated:** 2026-08-27
 
 ---
 
@@ -75,7 +75,7 @@ Every raw frame sent across a transport sub-stream MUST be prefixed with a fixed
 | Offset (Bytes) | Field Name | Type | Description |
 |---|---|---|---|
 | 0..1 | `magic` | `u16` | Fixed protocol identifier (`0x5032`) |
-| 2 | `stream_type` | `u8` | Sub-protocol ID (`0x01` Channel Membership & Automerge State Sync, `0x02` E2EE Message Envelopes, `0x03` Key/Identity/Slashing Revocation Gossip, `0x04` Voucher Issuance Handshakes, `0x05` RLN Signal Broadcast, `0x06` RLN Polynomial Share Exchange) |
+| 2 | `stream_type` | `u8` | Sub-protocol ID (`0x01` Channel Membership & Automerge State Sync, `0x02` E2EE Message Envelopes, `0x03` Key/Identity/Slashing Revocation Gossip, `0x04` Voucher Issuance Handshakes, `0x05` RLN Signal Broadcast, `0x06` RLN Polynomial Share Exchange, `0x07` Ephemeral Payloads) |
 | 3 | `flags` | `u8` | Bit flags (`0x01` Compressed via LZ4, `0x02` Priority) |
 | 4..7 | `payload_len` | `u32` | Big-endian length of the following payload bytes |
 | 8..11 | `checksum` | `u32` | CRC32-C checksum of the payload bytes |
@@ -177,7 +177,7 @@ minimal, and implementations MUST observe all four points:
    protocol. Bridging a QUIC or TLS channel satisfies §1. Bridging a
    plaintext socket does not.
 
-Because one pipe carries all six §6 sub-streams, priority degrades from
+Because one pipe carries every §6 sub-stream, priority degrades from
 QUIC stream scheduling to send-queue ordering: an urgent frame jumps the
 queue, but a frame already handed to the host completes first. Bounded by
 the frame ceiling in §3.4 rather than a stall.
@@ -205,7 +205,7 @@ When Node A initiates a connection to Node B, the following mutually authenticat
 
 Node A (Initiator)                                        Node B (Responder)
   │                                                               │
-  │──── 1. HandshakeInit { timestamp, did_key_a, nonce_a } ──────►│
+  │─ 1. HandshakeInit { timestamp, did_key_a, nonce_a, sub_streams } ─►│
   │                                                               │ (Check clock skew <= 10s)
   │◄─── 2. HandshakeChallenge { nonce_b, sig_b(nonce_a) } ────────│
   │                                                               │
@@ -219,6 +219,7 @@ Node A (Initiator)                                        Node B (Responder)
 2. **Clock Skew Verification:** Node B compares the remote timestamp to its system clock. If the absolute offset exceeds **10 seconds**, Node B MUST terminate the connection with `Err: ClockSkewTooHigh` and request relay-assisted drift alignment.
 3. **Replay Protection:** `nonce_a` and `nonce_b` MUST be 32 cryptographically secure random bytes. Nodes MUST track nonces keyed by the handshake timestamp and MUST reject any handshake whose age exceeds **300 seconds**. The replay window MUST be bound to the handshake timestamp rather than a sliding timer so a stale handshake cannot be replayed after the initial window expires.
 4. **Handshake Freshness:** Handshake messages MUST complete within **5000ms**; otherwise the initiator or responder MUST abort with `Err: HandshakeTimeout`.
+5. **Sub-Stream Count:** On transports where each §6 sub-stream is a separate stream, `HandshakeInit.sub_streams` states how many the initiator will open, and the responder MUST accept exactly that many. A responder MUST NOT wait for a number derived from the stream types it happens to know: accepting a stream is untimed, so waiting on one the initiator never opens parks the responder indefinitely — it never surfaces the connection, while the initiator completes its handshake and treats the peer as reachable. Traffic then disappears with no error on either side. An initiator predating this field opened the six types defined at the time, so a responder MUST treat its absence as **6** and MUST NOT track that constant to the current count. A responder MUST adopt a stream whose tag it does not recognise, per §7.
 
 ---
 
@@ -234,6 +235,35 @@ Once the base encrypted connection is established (either direct or via Iroh DER
 - `0x06` **RLN Polynomial Share Exchange:** Gossips evaluation shares $(x_k, y_k)$ keyed by the `(E, i)` tuple for deduplicated transitive slashing.
 
 Revocation tombstones over `0x03` MUST be processed with strictly higher priority than `0x02` traffic. On partition reconnection, peers MUST process all pending revocation tombstones before executing Automerge state merges. Evaluation shares over `0x06` MUST be propagated to trigger transitive slashing when peers observe conflicting RLN nullifiers.
+
+---
+
+### 6.1 Ephemeral Payloads (`0x07`)
+
+Stream `0x07` carries signals that are meaningful only while both peers
+are connected — presence, typing indicators, read receipts. Frames MUST
+be sealed under the session key exactly as `0x02` is, and MUST be subject
+to the same membership rules in both directions: a signal is still a
+disclosure.
+
+Implementations MUST NOT persist a `0x07` payload, queue it for a peer
+that is not connected, retry it, or replay it to a peer that reconnects.
+A recipient who is absent when one is sent does not receive it, and that
+is the intended behaviour: these signals are false by the time a retry
+would arrive, and delivering a stale one is worse than delivering none.
+
+The payload is opaque to the protocol. What a signal means belongs to the
+application, and giving it a schema here would require revising this
+document whenever an application invents a new one.
+
+**Why a stream rather than an ordinary message.** Carrying these as
+`0x02` envelopes would work and would append to the channel document
+permanently. A thirty-second heartbeat is on the order of a few thousand
+entries per conversation per day, replicated to every participant and
+written to disk, for signals nobody will ever read back.
+
+`0x07` was assigned after `0x06`, so an implementation predating it drops
+the frame under §7's unknown-stream rule rather than failing on it.
 
 ---
 

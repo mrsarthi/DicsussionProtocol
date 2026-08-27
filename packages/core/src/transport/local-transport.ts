@@ -44,6 +44,29 @@ const localTransportRegistry = new Map<string, LocalTransport>();
  * In-process connection between two local peers.
  */
 class LocalConnection implements IConnection {
+  /** Fires once when the connection ends, from either side. */
+  private readonly closeHandlers = new Set<() => void>();
+
+  onClose(handler: () => void): () => void {
+    // A connection that has already ended still answers, immediately —
+    // a listener registered a tick late would otherwise wait forever for
+    // an event that has been and gone.
+    if (this._state === ConnectionState.Disconnected) {
+      handler();
+      return () => {};
+    }
+
+    this.closeHandlers.add(handler);
+    return () => this.closeHandlers.delete(handler);
+  }
+
+  /** Notify once, then forget: close is not a repeating event. */
+  private notifyClosed(): void {
+    const handlers = [...this.closeHandlers];
+    this.closeHandlers.clear();
+    for (const handler of handlers) handler();
+  }
+
   private readonly frameEmitter = new Emitter<{ frame: [Frame] }>();
   private readonly sendQueue = new PriorityFrameQueue();
   private _state: ConnectionState = ConnectionState.Handshaking;
@@ -126,6 +149,7 @@ class LocalConnection implements IConnection {
     if (this._state === ConnectionState.Disconnected) return;
 
     this._state = ConnectionState.Disconnected;
+    this.notifyClosed();
     this.sendQueue.clear();
     this.frameEmitter.removeAllListeners();
 
@@ -278,9 +302,31 @@ export class LocalTransport implements ITransport {
     };
   }
 
+  /** Close our side of the pair with `peerDid`, because they went away. */
+  private dropConnectionTo(peerDid: string): void {
+    const connection = this.connections.get(peerDid);
+    if (!connection) return;
+
+    this.connections.delete(peerDid);
+    void connection.close();
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     localTransportRegistry.delete(this.didKey);
+
+    // Tell the far side too.
+    //
+    // Each side of an in-process pair holds its own connection object,
+    // so closing ours leaves the peer's believing it is still live. On a
+    // real transport the socket closing is what informs them; here
+    // nothing does, and the difference is not a detail — an application
+    // testing presence against this backend would see a peer that never
+    // appears to leave, and conclude its own logic was wrong.
+    for (const peerDid of this.connections.keys()) {
+      const remote = localTransportRegistry.get(peerDid);
+      remote?.dropConnectionTo(this.didKey);
+    }
 
     const closePromises = Array.from(this.connections.values()).map((c) => c.close());
     await Promise.all(closePromises);

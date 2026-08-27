@@ -126,27 +126,31 @@ test.describe('Suite 4.1 — Real Network Transport', () => {
     }
   });
 
-  test('all six sub-streams multiplex over one connection', async () => {
+  test('every sub-stream multiplexes over one connection', async () => {
     const pair = await connectedPair();
 
     try {
+      // Counted from StreamType itself. Hard-coding the number means
+      // adding a stream type makes this wait forever for a total that
+      // has already moved past it.
+      const streams = Object.values(StreamType);
       const seen = new Set<number>();
-      const allSix = new Promise<void>((resolve) => {
+      const allOfThem = new Promise<void>((resolve) => {
         pair.accepted.onFrame((frame) => {
           seen.add(frame.header.streamType);
-          if (seen.size === 6) resolve();
+          if (seen.size === streams.length) resolve();
         });
       });
 
-      for (const streamType of Object.values(StreamType)) {
+      for (const streamType of streams) {
         await pair.dialed.send(
           streamType,
           new TextEncoder().encode(`stream ${streamType}`),
         );
       }
 
-      await allSix;
-      expect(seen.size).toBe(6);
+      await allOfThem;
+      expect([...seen].sort()).toEqual([...streams].sort());
     } finally {
       await pair.teardown();
     }

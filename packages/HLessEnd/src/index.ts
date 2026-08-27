@@ -61,6 +61,7 @@ export type {
   Identity,
   NetworkStatus,
   PeerConnectedEvent,
+  PeerDisconnectedEvent,
   SdkChatMessage,
   SendMessageOptions,
 } from './types.js';

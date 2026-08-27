@@ -84,7 +84,7 @@ NAT traversal failing. `refreshAddresses()` re-reads your snapshot;
 
 ### What you give up
 
-One pipe carries all six RFC 001 §6 sub-streams, so priority weakens
+One pipe carries every RFC 001 §6 sub-stream, so priority weakens
 from QUIC stream scheduling to send-queue ordering: urgent frames jump
 the queue, but a frame already handed to you finishes first. Bounded by
 the frame ceiling rather than a stall. `IrohTransport` keeps the
