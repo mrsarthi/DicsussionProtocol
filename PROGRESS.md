@@ -1085,14 +1085,14 @@ the value arrives from a peer and is written into the document.
 
 | | |
 |---|---|
-| Version | **0.7.1**, both packages |
+| Version | **0.7.2**, both packages |
 | Tests | **619 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | 0.7.0 on npm; **0.7.1 pending** — 0.7.0 has the presence bug above |
+| Published | 0.7.1 on npm; **0.7.2 pending** |
 | Docs | `HOW_TO_USE.md` + a README on each package |
 
 **Test suites:** 11 e2e, 14 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT, plus
