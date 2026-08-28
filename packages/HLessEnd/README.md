@@ -148,10 +148,7 @@ entries per day, per device.
 
 ```ts
 await client.chat.sendEphemeral(channelId, payload);   // Uint8Array
-client.chat.onEphemeral(channelId, (fromDid, payload) => {})
-await client.chat.sendMessage({ channelId, content, attachments, replyTo })
-await client.blobs.put(bytes, mime)      // → BlobRef
-await client.blobs.get(ref)              // → Uint8Array;
+client.chat.onEphemeral(channelId, (fromDid, payload) => {});
 ```
 
 Not stored, not queued, not retried, not replayed. Returns how many peers
@@ -307,11 +304,15 @@ client.getTicket()               // PeerTicket — see the ticket note below
 client.addPeer(did, key)
 await client.connect(ticket)
 
-await client.chat.sendMessage({ channelId, content })
-client.chat.onMessage(channelId, (message) => {})
+await client.chat.sendMessage({ channelId, content, attachments, replyTo })
+client.chat.onMessage(channelId, (message) => {})   // message.replyTo
 await client.chat.sendEphemeral(channelId, payload)
 client.chat.onEphemeral(channelId, (fromDid, payload) => {})
 await client.chat.getHistory(channelId)
+
+await client.blobs.put(bytes, mime)      // → BlobRef
+await client.blobs.get(ref)              // → Uint8Array
+client.blobs.onProgress(ref, (received, total) => {})
 
 client.getNetworkStatus()        // { connected, peerCount, relayActive, … }
 client.onNetworkStatus.on('status', (s) => {})

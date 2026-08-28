@@ -334,6 +334,18 @@ await alice.chat.sendMessage({
   content: 'Hello, decentralized world!',
 });
 
+// Replying is a field, not a marker buried in the text. `content`
+// carries only what was typed.
+const question = await alice.chat.sendMessage({
+  channelId: 'general',
+  content: 'what time?',
+});
+await bob.chat.sendMessage({
+  channelId: 'general',
+  content: 'seven',
+  replyTo: [question.id],
+});
+
 // A peer's trust score, computed locally and subjectively.
 const profile = await alice.trust.getProfile(bob.did);
 console.log(`Trust: ${profile.subjectiveScore} POC (Tier ${profile.tier})`);
