@@ -1040,12 +1040,53 @@ assuming it would.
 
 ---
 
+## Task: reply references belong in the SDK
+
+Requested by the app, which was encoding them as a control line inside
+`content` — the same shape rejected for profiles one release earlier, for
+the same reasons: a convention every client must know indefinitely,
+literal text in any client that does not, and inseparable from text the
+user actually typed. A quoted excerpt cannot strip the marker without
+risking stripping something real.
+
+`readonly replyTo?: readonly string[]` on `SendMessageOptions` and
+`SdkChatMessage`, threaded through the same five layers `attachments`
+uses: SDK types, `MessagePayload`, the envelope codec, the CRDT message,
+and `getHistory`.
+
+### Two decisions worth not re-deriving
+
+**Plural.** A reply may answer several messages, and widening a singular
+field afterwards breaks every reader that already parses it.
+
+**Ids are carried, never resolved.** A reply legitimately arrives before
+the message it answers, and may name one this device will never hold.
+Dropping an unresolved reference would silently convert a reply into an
+ordinary message, so it is preserved and rendering is the app's call.
+There is a test for exactly this.
+
+Serialized into the CRDT rather than stored as a list, for the reason
+`attachments` is: Automerge would treat a list as a list CRDT and
+interleave two replicas' edits.
+
+### Learned from the attachments bug
+The envelope round-trip test was written first this time. `encodePayload`
+names its fields explicitly, so a field added to `MessagePayload` and not
+to the encoder vanishes on the wire while every local test still passes —
+the CRDT carries it separately. That cost a debugging round last release;
+here it cost one test.
+
+Bounds on both the count (32) and the id length (`MAX_ID_LENGTH`), since
+the value arrives from a peer and is written into the document.
+
+---
+
 ## Current State (2026-08-25)
 
 | | |
 |---|---|
 | Version | **0.7.1**, both packages |
-| Tests | **605 passing, 0 failing** |
+| Tests | **619 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |

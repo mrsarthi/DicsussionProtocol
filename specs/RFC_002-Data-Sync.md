@@ -46,7 +46,8 @@ Every document MUST conform to a registered schema structure:
           "zk_proof": "base64-serialized-groth16-proof",
           "rln_nullifier": "base64-serialized-nullifier",
           "zk_envelope_ref": "hash-of-rln-proof",
-          "attachments": "[{\"hash\":\"<sha256-hex>\",\"size\":40213,\"mime\":\"image/png\"}]"
+          "attachments": "[{\"hash\":\"<sha256-hex>\",\"size\":40213,\"mime\":\"image/png\"}]",
+          "reply_to": "[\"msg-uuid-0\"]"
         }
       }
     }
@@ -59,7 +60,20 @@ bytes themselves MUST NOT be inlined here: a document is replicated in
 full to every participant and kept indefinitely, so an inlined picture is
 copied to people who never opened it and cannot afterwards be removed.
 
-It is stored **serialized**, not as a structured list. Automerge merges
+`reply_to` names the messages this one answers. It is a field rather
+than a marker inside `content` because a marker is a convention every
+implementation must know indefinitely, is rendered as literal text by any
+that does not, and cannot be separated from text the author actually
+wrote.
+
+An implementation MUST NOT require that a referenced id resolve. A reply
+may arrive before the message it answers, or name one this replica will
+never hold, so a dangling reference MUST be preserved rather than
+dropped: discarding it silently converts a reply into an ordinary
+message. Whether to render an unresolved reference, and how, is the
+application's decision.
+
+Both fields are stored **serialized**, not as structured lists. Automerge merges
 nested maps field by field, so two replicas editing the same message
 could otherwise combine halves of two different handles into a reference
 to content neither of them holds. A malformed value MUST be read as no

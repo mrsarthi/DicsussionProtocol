@@ -149,7 +149,7 @@ entries per day, per device.
 ```ts
 await client.chat.sendEphemeral(channelId, payload);   // Uint8Array
 client.chat.onEphemeral(channelId, (fromDid, payload) => {})
-await client.chat.sendMessage({ channelId, content, attachments })
+await client.chat.sendMessage({ channelId, content, attachments, replyTo })
 await client.blobs.put(bytes, mime)      // → BlobRef
 await client.blobs.get(ref)              // → Uint8Array;
 ```
@@ -167,6 +167,27 @@ client.onPeerDisconnected.on('peer', ({ peerDid, at }) => {});
 ```
 
 A green dot driven by connection alone switches on and never off.
+
+## Replies
+
+```ts
+const question = await client.chat.sendMessage({ channelId, content: 'what time?' });
+await client.chat.sendMessage({ channelId, content: 'seven', replyTo: [question.id] });
+```
+
+A field rather than a marker inside `content`. A marker is a convention
+every client must know forever, renders as literal text in any that does
+not, and cannot be stripped from a quoted excerpt without also stripping
+text a user typed.
+
+An array, because a reply may answer several messages and widening a
+singular field later breaks every reader.
+
+**Ids are carried, not resolved.** `replyTo` may name a message this
+device does not hold — replies arrive out of order, and a peer may
+answer something from before you joined. Resolve against `getHistory()`
+and decide what to show when it is absent; a dangling reference is not
+an error.
 
 ## Names and pictures
 

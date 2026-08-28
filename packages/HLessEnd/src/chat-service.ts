@@ -250,6 +250,7 @@ export class ChatService {
       authorDid,
       content: options.content,
       attachments: options.attachments,
+      replyTo: options.replyTo,
       timestamp,
       messageIndex,
       nullifierHash,
@@ -273,6 +274,7 @@ export class ChatService {
       nullifierHash,
       content: options.content,
       attachments: options.attachments,
+      replyTo: options.replyTo,
       timestamp,
       verifiedTier: 0,
       proofEpoch: currentEpoch(),
@@ -414,6 +416,7 @@ export class ChatService {
         nullifierHash: m.nullifierHash,
         content: m.content,
         attachments: parseAttachments(m.attachments),
+        replyTo: parseReplyTo(m.replyTo),
         timestamp: m.timestamp,
         verifiedTier: 0,
         proofEpoch: Math.floor(m.timestamp / 10),
@@ -490,6 +493,7 @@ export class ChatService {
       nullifierHash: payload.nullifierHash,
       content: payload.content,
       attachments: payload.attachments,
+      replyTo: payload.replyTo,
       timestamp: payload.timestamp,
       verifiedTier: 0,
       proofEpoch: Math.floor(payload.timestamp / 10),
@@ -639,6 +643,7 @@ export class ChatService {
       attachments: payload.attachments
         ? JSON.stringify(payload.attachments)
         : undefined,
+      replyTo: payload.replyTo ? JSON.stringify(payload.replyTo) : undefined,
       timestamp: payload.timestamp,
       messageIndex: payload.messageIndex,
       zkEnvelopeRef: payload.id,
@@ -668,6 +673,27 @@ function parseAttachments(raw: unknown): readonly BlobRef[] | undefined {
   try {
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as BlobRef[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read reply references back out of a stored message.
+ *
+ * A message written before replies existed has none, and a malformed
+ * value yields none rather than throwing — one bad row must not make a
+ * conversation unreadable.
+ */
+function parseReplyTo(raw: unknown): readonly string[] | undefined {
+  if (typeof raw !== 'string' || raw.length === 0) return undefined;
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return undefined;
+    return parsed.every((id) => typeof id === 'string')
+      ? (parsed as string[])
+      : undefined;
   } catch {
     return undefined;
   }

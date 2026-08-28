@@ -342,6 +342,20 @@ export class ChatService {
 §6.3). Only the handles travel with the message; an implementation MUST
 NOT send the bytes until a recipient requests them.
 
+`SendMessageOptions.replyTo` and `ChatMessage.replyTo` carry the ids of
+messages a message answers, as `readonly string[]`. They MUST be a
+distinct field: encoded inside `content` a reference becomes a convention
+every implementation must know forever, appears as literal text in any
+that does not, and cannot be told apart from text the author wrote.
+
+Ids are carried opaquely. An implementation MUST NOT drop a reference
+that names a message it does not hold — replies arrive out of order, and
+a peer may answer something predating this device's membership — and MUST
+NOT reject the message on that basis. Resolution belongs to the
+application. Both the count of references and their length MUST be
+bounded, since they arrive from a peer and are written into the
+conversation document (RFC 002 §3.1).
+
 #### `client.trust` Namespace
 ```typescript
 export interface PeerTrustProfile {

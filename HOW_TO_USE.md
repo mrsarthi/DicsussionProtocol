@@ -480,6 +480,7 @@ client.chat.onMessage('general', (message) => {
   message.content;    // string
   message.authorDid;  // undefined when sent anonymously
   message.timestamp;  // seconds
+  message.replyTo;    // ids this answers, or undefined
 });
 
 const history = await client.chat.getHistory('general');
@@ -491,6 +492,43 @@ await client.disconnect();
 Messages sent while a peer is unreachable are queued and flushed on
 reconnect. A resolved `sendMessage` means *accepted locally*, not
 *delivered* — see section 3 for why those differ more than usual here.
+
+### Replying to a message
+
+```ts
+const question = await client.chat.sendMessage({
+  channelId: 'general',
+  content: 'what time?',
+});
+
+await client.chat.sendMessage({
+  channelId: 'general',
+  content: 'seven',
+  replyTo: [question.id],
+});
+```
+
+A field, not a marker inside `content`. Encoding the reference in the
+body works and is a trap of the same shape as tagging profiles onto
+chat: every client has to know the convention forever, any client that
+does not renders it as literal text, and you cannot strip it from a
+quoted excerpt without also stripping text a user typed.
+
+It is an array because a reply may answer more than one message, and
+because widening a singular field afterwards breaks every reader.
+
+**Ids are carried, not resolved.** `replyTo` may name a message this
+device does not hold — a reply legitimately arrives before the message
+it answers, and a peer may be answering something from before you joined
+the conversation. That is a rendering decision, not an error:
+
+```ts
+const history = await client.chat.getHistory('general');
+const quoted = message.replyTo
+  ?.map((id) => history.find((m) => m.id === id))
+  .filter((m) => m !== undefined);
+// quoted may be shorter than message.replyTo — show what you have.
+```
 
 ---
 

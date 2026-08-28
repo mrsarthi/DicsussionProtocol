@@ -45,6 +45,14 @@ export interface ChatMessage {
    * by field — producing a reference to a blob neither of them has.
    */
   attachments?: string;
+  /**
+   * Serialized ids of the messages this one replies to.
+   *
+   * Serialized for the same reason as `attachments`: Automerge would
+   * otherwise treat this as a list CRDT and interleave two replicas'
+   * edits, producing a reply that names messages nobody sent it to.
+   */
+  replyTo?: string;
   [key: string]: unknown;
 }
 

@@ -32,6 +32,19 @@ export interface MessagePayload {
    * crosses the wire and never enters the conversation document.
    */
   readonly attachments?: readonly BlobRef[];
+  /**
+   * Ids of messages this one is a reply to.
+   *
+   * A first-class field rather than a marker inside `content`, which is
+   * what an application is forced into otherwise: a convention every
+   * client must know forever, rendered as literal text by any that does
+   * not, and impossible to strip from a quoted excerpt without also
+   * stripping text a user typed.
+   *
+   * Plural because a reply may answer several messages at once, and
+   * because widening a singular field later would break every reader.
+   */
+  readonly replyTo?: readonly string[];
   /** Unix timestamp in seconds. */
   readonly timestamp: number;
   /**
@@ -98,6 +111,7 @@ export function encodePayload(payload: MessagePayload): Uint8Array {
       authorDid: payload.authorDid ?? null,
       content: payload.content,
       attachments: payload.attachments ?? null,
+      replyTo: payload.replyTo ?? null,
       timestamp: payload.timestamp,
       messageIndex: payload.messageIndex,
       nullifierHash: payload.nullifierHash ?? null,
@@ -155,6 +169,38 @@ function parseAttachments(raw: unknown): readonly BlobRef[] | undefined {
 }
 
 /**
+ * Most messages one reply may name.
+ *
+ * Bounded for the same reason as attachments: the value arrives from a
+ * peer and is written into the conversation document.
+ */
+const MAX_REPLY_TO = 32;
+
+/**
+ * Validate reply references arriving from a peer.
+ *
+ * Ids are opaque here — this checks that they are plausible strings, not
+ * that they name anything. A reply legitimately arrives before the
+ * message it answers, and may name one this node will never receive, so
+ * resolving is the application's business and a dangling reference is
+ * not an error.
+ *
+ * Malformed input yields no references rather than throwing: a bad id
+ * should cost the quoted excerpt, not the reply itself.
+ */
+function parseReplyTo(raw: unknown): readonly string[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  if (raw.length > MAX_REPLY_TO) return undefined;
+
+  for (const id of raw) {
+    if (typeof id !== 'string' || id.length === 0) return undefined;
+    if (id.length > MAX_ID_LENGTH) return undefined;
+  }
+
+  return raw as string[];
+}
+
+/**
  * Parse a decrypted payload.
  *
  * @throws If the bytes are not a well-formed payload. Callers treat this
@@ -195,6 +241,7 @@ export function decodePayload(bytes: Uint8Array): MessagePayload {
 
   const authorDid = raw['authorDid'];
   const attachments = parseAttachments(raw['attachments']);
+  const replyTo = parseReplyTo(raw['replyTo']);
   const messageIndex = raw['messageIndex'];
   const nullifierHash = raw['nullifierHash'];
   const share = raw['rlnShare'] as { x?: unknown; y?: unknown } | null;
@@ -208,6 +255,7 @@ export function decodePayload(bytes: Uint8Array): MessagePayload {
     authorDid: typeof authorDid === 'string' ? authorDid : undefined,
     content: raw['content'],
     attachments,
+    replyTo,
     timestamp: raw['timestamp'],
     messageIndex: typeof messageIndex === 'number' ? messageIndex : 0,
     nullifierHash: typeof nullifierHash === 'string' ? nullifierHash : undefined,

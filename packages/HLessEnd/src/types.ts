@@ -138,6 +138,20 @@ export interface SendMessageOptions {
    */
   readonly attachments?: readonly BlobRef[];
   /**
+   * Ids of messages this one replies to.
+   *
+   * Carried as its own field so a reply is structured data rather than a
+   * marker inside `content` — which every client would have to know to
+   * strip, forever, and which renders as literal text in any that does
+   * not.
+   *
+   * Ids are not resolved or checked. A reply may legitimately arrive
+   * before the message it answers, or name one this device never
+   * received, so a reference that resolves to nothing is a rendering
+   * decision rather than an error.
+   */
+  readonly replyTo?: readonly string[];
+  /**
    * Who this conversation belongs to, as `did:key`s.
    *
    * Used only when the channel does not exist yet — the first message
@@ -170,6 +184,13 @@ export interface SdkChatMessage {
   readonly content: string;
   /** Blob handles this message refers to; fetch with `client.blobs.get()`. */
   readonly attachments?: readonly BlobRef[];
+  /**
+   * Ids of messages this one replies to.
+   *
+   * May name a message this device does not hold — resolve against
+   * `getHistory()` and decide what to show when it is absent.
+   */
+  readonly replyTo?: readonly string[];
   readonly timestamp: number;
   readonly verifiedTier: number;
   readonly proofEpoch: number;
