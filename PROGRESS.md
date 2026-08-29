@@ -1179,14 +1179,14 @@ simply by driving the feature the way an application actually would.
 
 | | |
 |---|---|
-| Version | **0.7.3**, both packages |
-| Tests | **638 passing, 0 failing** |
+| Version | **0.7.4**, both packages |
+| Tests | **641 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | 0.7.2 on npm; **0.7.3 pending** |
+| Published | 0.7.3 on npm; **0.7.4 pending** — 0.7.3 has the profile gap above |
 | Docs | `HOW_TO_USE.md` + a README on each package |
 
 **Test suites:** 13 e2e, 16 SDK, 15 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT.
