@@ -1081,12 +1081,68 @@ the value arrives from a peer and is written into the document.
 
 ---
 
+## Task: a stranger can knock (Stream `0x0a`)
+
+The app wanted a pairing request carrying the sender's ticket and name,
+so accepting connects rather than prompting for a paste. Their analysis
+was right and I verified each claim before building on it:
+
+- `PeerConnectedEvent` carries `peerDid`, `paired`, `direction` — nothing
+  more.
+- The X25519 encryption key is derived under `dicsussion/identity/
+  encryption/v1`, a **separate HKDF label**, so it genuinely cannot be
+  recovered from the `did:key`. This was the load-bearing claim.
+- `handleFrame` returns before every stream for an unpaired peer.
+
+So a node receiving a stranger's connection knew exactly who was calling
+and could do nothing with it — no key to encrypt for, no address to dial
+back. Pasting was never a UX choice.
+
+### The exception, and why it stays narrow
+`0x0a` is the only stream an unpaired peer may use. Bounding it is what
+stops it becoming a channel a stranger can talk on:
+
+- **One request per connection**, tracked in `SessionManager.requested`.
+- **4KB cap**, since parsing and storing it is the only work a stranger
+  can cause.
+- **The ticket must bind to the proven `did:key`.** Without this check a
+  peer could present a third party's ticket and have us register that
+  party's key, or dial them, off a connection proving only its own
+  identity. Tested directly.
+- A ticket without an encryption key is dropped — it would produce an
+  accept button that silently does nothing.
+- Sealed under the session key, so a relay sees ciphertext rather than a
+  name.
+
+### What this gives up, deliberately
+RFC 001 §3.3 put pairing out of band because a handshake proves key
+ownership, not that the owner is who a user meant to reach. Carrying the
+material in-band does not weaken that — the identifier is still proven,
+impersonation is still impossible — but it removes the out-of-band step
+where a person confirmed which human a `did:key` belongs to. Acceptance
+is now a judgement made on a self-asserted name.
+
+That is inherent to any friend-request flow and was the app's explicit
+design decision. It is recorded in RFC 001 §6.4 rather than left
+implicit, `displayName` is documented as a claim everywhere it appears,
+and the SDK never pairs automatically.
+
+### Method
+A test asserts an unpaired peer still gets nothing else — messages,
+ephemeral signals and profiles all stay shut before and after a knock.
+Verified over real QUIC as well as in-process, including that the ticket
+carries working addresses, which `LocalTransport` cannot show. That check
+has now caught something in three consecutive releases, so it is no
+longer optional for anything touching the wire.
+
+---
+
 ## Current State (2026-08-25)
 
 | | |
 |---|---|
 | Version | **0.7.2**, both packages |
-| Tests | **619 passing, 0 failing** |
+| Tests | **638 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |

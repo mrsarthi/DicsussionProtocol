@@ -54,6 +54,9 @@ export const STREAM_PRIORITY: Record<number, number> = {
   // transfer must never delay the conversation carrying it.
   [StreamType.PROFILE]: 15,
   [StreamType.BLOB]: 5,
+  // Above chat: a knock is a person waiting on a screen, and there is at
+  // most one of them per connection.
+  [StreamType.PAIRING_REQUEST]: 25,
 };
 
 /** Bytes requested per read. Frames are reassembled, so this is a hint. */

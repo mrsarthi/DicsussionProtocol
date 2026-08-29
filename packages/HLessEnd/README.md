@@ -80,6 +80,42 @@ client.onPeerConnected.on('peer', ({ peerDid, paired, direction }) => {
 });
 ```
 
+### Knocking, so nobody pastes anything
+
+`onPeerConnected` tells you *who* connected and nothing else. That is not
+an oversight: the handshake proves a `did:key` and carries neither the
+peer's encryption key — derived under a separate label, so unrecoverable
+from the identifier — nor their addresses. You know exactly who is
+calling and can neither encrypt for them nor dial them back.
+
+A pairing request closes that gap:
+
+```ts
+// Them, after dialling your ticket:
+await client.requestPairing(theirDid, { displayName: 'Alice' });
+
+// You:
+client.onPairingRequest.on('request', ({ peerDid, ticket, displayName }) => {
+  // Show a knock. On accept:
+  client.acceptPairingRequest(request);   // or declinePairingRequest
+});
+
+// A knock can land before your UI mounts, and they only get one:
+client.pendingPairingRequests();
+```
+
+The request carries **their ticket**, so accepting needs nothing copied
+by hand, and it is the only thing an unpaired peer may send — one per
+connection, everything else still shut to them.
+
+> **`displayName` is a claim.** Their `did:key` is proven and the ticket
+> is bound to it, so nobody can knock using someone else's ticket. But
+> the name is a string they chose. Show it as asserted, not as identity —
+> deciding who that identifier really belongs to is the whole reason
+> there is an accept button.
+
+If your app keeps a local nickname, it should win from that point on.
+
 ---
 
 ## Conversations have a guest list
@@ -313,6 +349,12 @@ await client.chat.getHistory(channelId)
 await client.blobs.put(bytes, mime)      // → BlobRef
 await client.blobs.get(ref)              // → Uint8Array
 client.blobs.onProgress(ref, (received, total) => {})
+
+await client.requestPairing(theirDid, { displayName })
+client.onPairingRequest.on('request', (request) => {})
+client.pendingPairingRequests()
+client.acceptPairingRequest(request)
+client.declinePairingRequest(request)
 
 client.getNetworkStatus()        // { connected, peerCount, relayActive, … }
 client.onNetworkStatus.on('status', (s) => {})

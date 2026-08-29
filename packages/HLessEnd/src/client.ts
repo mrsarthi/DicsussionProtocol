@@ -39,6 +39,12 @@ import { IdentityService } from './identity-service.js';
 import type { LocalIdentity } from './identity-service.js';
 import { currentEpoch, OutboxManager } from './outbox.js';
 import { BlobService } from './blob-service.js';
+import type { PairingRequest } from './pairing-request.js';
+import {
+  decodeRequest,
+  encodeRequest,
+  MAX_REQUEST_NAME_LENGTH,
+} from './pairing-request.js';
 import { PeerRegistry } from './peer-registry.js';
 import { ProfileService } from './profile-service.js';
 import type { MessagePayload } from './message-codec.js';
@@ -166,6 +172,22 @@ export class DicsussionClient {
     peer: [PeerDisconnectedEvent];
   }>();
 
+  /**
+   * A stranger asked to be paired (RFC 001 §6.4).
+   *
+   * Carries their ticket, so accepting needs nothing pasted by hand, and
+   * the name they gave — which is a **claim**, not an identity. Their
+   * `did:key` is proven and the ticket is bound to it; who that
+   * identifier actually belongs to is exactly what the person deciding
+   * has to judge.
+   *
+   * A request that arrives before you subscribe is still available from
+   * `pendingPairingRequests()`.
+   */
+  public readonly onPairingRequest = new Emitter<{
+    request: [PairingRequest];
+  }>();
+
   private readonly outbox: OutboxManager;
   private readonly config: Required<Omit<ClientConfig, 'proofArtifacts'>> &
     Pick<ClientConfig, 'proofArtifacts'>;
@@ -180,6 +202,14 @@ export class DicsussionClient {
   private documentStore: DocumentStore | null = null;
   private messageStore: MessageStore | null = null;
   private profiles: ProfileService | null = null;
+  /**
+   * Knocks received this session, newest per peer.
+   *
+   * Kept because a request can arrive before the application subscribes
+   * — an inbound connection and a UI mounting are not ordered — and the
+   * only notification a stranger gets to send would otherwise be lost.
+   */
+  private readonly knocks = new Map<string, PairingRequest>();
   private blobStore: BlobService | null = null;
   private voucherService: VoucherService | null = null;
   private voucherHandshake: VoucherHandshake | null = null;
@@ -263,6 +293,24 @@ export class DicsussionClient {
       },
       onProfile: async (peerDid, encoded) => {
         await this.profiles?.ingestRemote(peerDid, encoded);
+      },
+      onPairingRequest: async (peerDid, payload) => {
+        // Validation lives in the codec, which binds the ticket to the
+        // did:key the handshake proved. A request failing that check is
+        // dropped rather than surfaced: an accept button for it would
+        // register a stranger's key against this connection.
+        const request = decodeRequest(payload, peerDid);
+        if (!request) return;
+
+        const event: PairingRequest = {
+          ...request,
+          at: Math.floor(Date.now() / 1000),
+        };
+
+        this.knocks.set(peerDid, event);
+        this.onPairingRequest.emit('request', event);
+
+        return Promise.resolve();
       },
       onBlobFrame: async (peerDid, payload) => {
         await this.blobStore?.handleFrame(peerDid, payload);
@@ -387,6 +435,80 @@ export class DicsussionClient {
     // connection happens to last.
     const connection = this.peers.getPeer(did)?.connection;
     if (connection) this.offerProfile(connection);
+  }
+
+  /**
+   * Ask a connected peer to pair with us.
+   *
+   * Sends our own ticket, so the far side can accept without anyone
+   * copying a string between devices, and optionally a name for them to
+   * see. Both are useless to them until a person accepts.
+   *
+   * Sendable to a peer that has not paired us — the only thing that is.
+   * They will take at most one per connection.
+   *
+   * **The ticket is a snapshot of how reachable we are right now.**
+   * Address discovery is not instant — a public address arrives from
+   * STUN after the socket binds, a relay later still — and this is
+   * naturally called moments after connecting, which is exactly when the
+   * least is known. A request sent then carries LAN addresses only: fine
+   * on the same network, undialable from anywhere else, and the failure
+   * appears later as a peer who cannot be reached rather than as
+   * anything wrong with the request. Wait for `getTicket().derpRelay`
+   * where reaching across networks matters.
+   *
+   * @param displayName What to call ourselves. Presented to them as a
+   *   claim; it carries no authority and should not be treated as one.
+   * @returns Whether it reached them. `false` means not connected.
+   */
+  async requestPairing(
+    peerDid: string,
+    options: { displayName?: string } = {},
+  ): Promise<boolean> {
+    if (options.displayName !== undefined) {
+      if (options.displayName.length > MAX_REQUEST_NAME_LENGTH) {
+        throw new Error(
+          `displayName is ${options.displayName.length} characters against a ` +
+            `limit of ${MAX_REQUEST_NAME_LENGTH}.`,
+        );
+      }
+    }
+
+    // Our ticket, not theirs: this is what they need to reach us.
+    return this.sessions.sendPairingRequest(
+      peerDid,
+      encodeRequest(this.getTicket(), options.displayName),
+    );
+  }
+
+  /**
+   * Requests received this session that have not been accepted.
+   *
+   * Read this on start-up as well as subscribing: a knock can arrive
+   * before a listener exists, and a stranger only gets to send one.
+   */
+  pendingPairingRequests(): readonly PairingRequest[] {
+    return [...this.knocks.values()];
+  }
+
+  /**
+   * Accept a request, registering the requester as a peer.
+   *
+   * Equivalent to `addPeer` with the ticket's key — the deciding is
+   * still the application's, and this only saves it decoding a ticket it
+   * was already handed.
+   *
+   * Their connection may have ended since; the ticket is kept so
+   * `connect()` can reach them again.
+   */
+  acceptPairingRequest(request: PairingRequest): void {
+    this.addPeer(request.ticket.didKey, request.ticket.encryptionKey!);
+    this.knocks.delete(request.peerDid);
+  }
+
+  /** Discard a request without pairing. Blocking is the app's concern. */
+  declinePairingRequest(request: PairingRequest): void {
+    this.knocks.delete(request.peerDid);
   }
 
   /**
@@ -775,6 +897,7 @@ export class DicsussionClient {
     this.onNetworkStatus.removeAllListeners();
     this.onPeerConnected.removeAllListeners();
     this.onPeerDisconnected.removeAllListeners();
+    this.onPairingRequest.removeAllListeners();
   }
 
   // ─── Bootstrap ────────────────────────────────────────────────────────

@@ -71,6 +71,15 @@ export interface SessionManagerDeps {
    * A paired peer sent a blob request, chunk, or refusal on `0x09`.
    */
   readonly onBlobFrame?: (peerDid: string, payload: Uint8Array) => Promise<void>;
+  /**
+   * An unpaired peer asked to be paired on Stream `0x0a`.
+   *
+   * The only callback here reachable before pairing.
+   */
+  readonly onPairingRequest?: (
+    peerDid: string,
+    payload: Uint8Array,
+  ) => Promise<void>;
   readonly syncEngine: CrdtSyncEngine;
   /** Hand a decrypted message to the chat layer. */
   readonly onMessage: (payload: MessagePayload) => Promise<void>;
@@ -103,6 +112,12 @@ export interface SessionManagerDeps {
  */
 export class SessionManager {
   private lastSyncTimestamp = 0;
+  /**
+   * Peers whose pairing request has already been taken this session.
+   *
+   * One per peer: a stranger gets a single knock, not a stream.
+   */
+  private readonly requested = new Set<string>();
 
   constructor(private readonly deps: SessionManagerDeps) {}
 
@@ -300,6 +315,27 @@ export class SessionManager {
     return true;
   }
 
+  /**
+   * Send a pairing request to a peer that has not paired us.
+   *
+   * Sealed like everything else, so a relay carrying the connection sees
+   * ciphertext rather than a name and a ticket.
+   */
+  async sendPairingRequest(
+    peerDid: string,
+    encoded: Uint8Array,
+  ): Promise<boolean> {
+    const connection = this.deps.peers.getPeer(peerDid)?.connection;
+    if (!connection) return false;
+
+    await connection.send(
+      StreamType.PAIRING_REQUEST,
+      sealOpaque(encoded, connection.sessionKey, currentEpoch()),
+    );
+
+    return true;
+  }
+
   /** Send our profile to one peer, on connecting or on being paired. */
   async sendProfileTo(
     connection: IConnection,
@@ -356,10 +392,37 @@ export class SessionManager {
     // membership frames, spend our voucher issuance quota, and inject
     // revocation gossip and RLN shares, purely by dialling us.
     //
-    // Nothing legitimate is lost: pairing is out of band (RFC 001 §3.3),
-    // so no wire traffic is needed to become paired. Peers that dial us
-    // stay connected and silent until the application pairs them, at
-    // which point every stream below opens at once.
+    // The one exception, and the reason it is narrow enough to make.
+    //
+    // A handshake proves a peer's `did:key` and discloses nothing else —
+    // not their encryption key, which is derived under a separate label,
+    // nor their addresses. So a stranger who dials us cannot be paired
+    // by us however much we want to: we have nothing to encrypt for and
+    // nowhere to dial back. `0x0a` carries exactly the material that
+    // closes that gap, and nothing else (RFC 001 §6.4).
+    //
+    // Accepted at most once per connection, so this cannot become a
+    // channel a stranger can talk on.
+    if (frame.header.streamType === StreamType.PAIRING_REQUEST) {
+      if (this.requested.has(connection.peerDid)) return;
+      this.requested.add(connection.peerDid);
+
+      try {
+        await this.deps.onPairingRequest?.(
+          connection.peerDid,
+          openOpaque(frame.payload, connection.sessionKey),
+        );
+      } catch {
+        // A malformed request is dropped like any other bad frame.
+      }
+
+      return;
+    }
+
+    // Otherwise: pairing is out of band (RFC 001 §3.3), so no wire
+    // traffic is needed to become paired. Peers that dial us stay
+    // connected and silent until the application pairs them, at which
+    // point every stream below opens at once.
     if (!this.isPaired(connection.peerDid)) return;
 
     try {

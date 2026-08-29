@@ -87,6 +87,11 @@ export {
   BlobUnavailableError,
   MAX_BLOB_BYTES,
 } from './blob-service.js';
+export type { PairingRequest } from './pairing-request.js';
+export {
+  MAX_REQUEST_BYTES,
+  MAX_REQUEST_NAME_LENGTH,
+} from './pairing-request.js';
 export type { PeerProfile, ProfileUpdate } from './profile-service.js';
 export {
   MAX_AVATAR_BYTES,

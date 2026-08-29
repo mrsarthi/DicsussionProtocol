@@ -75,7 +75,7 @@ Every raw frame sent across a transport sub-stream MUST be prefixed with a fixed
 | Offset (Bytes) | Field Name | Type | Description |
 |---|---|---|---|
 | 0..1 | `magic` | `u16` | Fixed protocol identifier (`0x5032`) |
-| 2 | `stream_type` | `u8` | Sub-protocol ID (`0x01` Channel Membership & Automerge State Sync, `0x02` E2EE Message Envelopes, `0x03` Key/Identity/Slashing Revocation Gossip, `0x04` Voucher Issuance Handshakes, `0x05` RLN Signal Broadcast, `0x06` RLN Polynomial Share Exchange, `0x07` Ephemeral Payloads, `0x08` Peer Profiles, `0x09` Blob Transfer) |
+| 2 | `stream_type` | `u8` | Sub-protocol ID (`0x01` Channel Membership & Automerge State Sync, `0x02` E2EE Message Envelopes, `0x03` Key/Identity/Slashing Revocation Gossip, `0x04` Voucher Issuance Handshakes, `0x05` RLN Signal Broadcast, `0x06` RLN Polynomial Share Exchange, `0x07` Ephemeral Payloads, `0x08` Peer Profiles, `0x09` Blob Transfer, `0x0A` Pairing Requests) |
 | 3 | `flags` | `u8` | Bit flags (`0x01` Compressed via LZ4, `0x02` Priority) |
 | 4..7 | `payload_len` | `u32` | Big-endian length of the following payload bytes |
 | 8..11 | `checksum` | `u32` | CRC32-C checksum of the payload bytes |
@@ -332,6 +332,53 @@ Blobs are **not** garbage collected when the messages referencing them
 are gone. A peer that has not yet synchronised holds references this node
 cannot see, so deleting on their behalf discards data still in use.
 Deletion is explicit.
+
+### 6.4 Pairing Requests (`0x0A`)
+
+Stream `0x0A` carries a request to be paired, and is **the only stream an
+unpaired peer may use**. Frames MUST be sealed as `0x02` is.
+
+**Why an exception exists at all.** The §5 handshake proves the far side
+holds the secret behind the `did:key` it presented, and discloses nothing
+further. It does not carry that peer's X25519 encryption key, which is
+derived from their seed under a separate HKDF label and cannot be
+computed from the identifier, nor their addresses. A node receiving a
+connection from a peer it has never met therefore knows precisely who is
+calling and can do nothing with that knowledge: it cannot encrypt for
+them, and cannot dial them back. Without this stream, pairing requires a
+human to move a ticket between devices by hand.
+
+A request carries the initiator's own ticket and, optionally, a display
+name.
+
+The responder MUST verify that the ticket's `did_key` equals the
+identifier the handshake proved for that connection, and MUST discard the
+request otherwise. Without this check a peer could present a third
+party's ticket and have the responder register that party's encryption
+key — or dial them — on the strength of a connection proving only the
+sender's own identity. A ticket carrying no encryption key MUST also be
+discarded: it cannot be paired from, and surfacing one produces an accept
+action that silently achieves nothing.
+
+Implementations MUST accept at most **one** request per connection and
+MUST bound its size. This is the only work an unpaired peer can cause,
+and both limits are what stop the exception from becoming a channel a
+stranger can talk on. Every other stream MUST remain closed to an
+unpaired peer, before and after a request.
+
+`display_name` is a **claim**. It is neither proven nor attested, and an
+implementation MUST surface it as something the sender asserted rather
+than as an identity. Rendering it as verified defeats the purpose of
+requiring an accept at all.
+
+**What this changes about §3.3.** Pairing was placed out of band because
+a handshake demonstrates key ownership, not that the owner is who a user
+intends to reach. Carrying the material in-band does not weaken that
+guarantee — the identifier remains proven and impersonation remains
+impossible — but it does remove the out-of-band step in which a person
+confirmed which human a `did:key` belongs to. Acceptance is therefore a
+judgement made on a self-asserted name, and an implementation MUST NOT
+pair automatically on receiving a request.
 
 ---
 

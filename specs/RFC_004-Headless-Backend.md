@@ -238,6 +238,28 @@ export class DicsussionClient {
    * peer who closed their app hours ago as present.
    */
   public readonly onPeerDisconnected: Emitter<PeerDisconnectedEvent>;
+  /**
+   * A stranger asked to be paired (RFC 001 §6.4).
+   *
+   * Carries their ticket, bound to the did:key the handshake proved, and
+   * a display name that is a claim rather than an identity.
+   */
+  public readonly onPairingRequest: Emitter<PairingRequest>;
+
+  /** Ask a connected peer to pair, sending our own ticket. */
+  requestPairing(
+    peerDid: string,
+    options?: { displayName?: string },
+  ): Promise<boolean>;
+
+  /** Requests received this session and not yet acted on. */
+  pendingPairingRequests(): readonly PairingRequest[];
+
+  /** Register the requester as a peer, using the ticket they sent. */
+  acceptPairingRequest(request: PairingRequest): void;
+
+  /** Discard a request without pairing. */
+  declinePairingRequest(request: PairingRequest): void;
 
   public static async init(
     config?: ClientConfig,
@@ -478,6 +500,12 @@ Failures MUST be distinguishable: `BlobTooLargeError`,
 `BlobUnavailableError` and `BlobCorruptError` are three different things
 to tell a user, and an implementation that collapses them leaves an
 application unable to say which happened.
+
+An implementation MUST NOT pair automatically on receiving a request.
+Acceptance is a judgement about which person a `did:key` belongs to, made
+on a self-asserted name, and nothing in the protocol can make it for the
+user. `pendingPairingRequests()` exists because a request may arrive
+before the application subscribes and a peer sends at most one.
 
 ### 7.4 Conversation Membership
 

@@ -180,7 +180,7 @@ that fails if any Node builtin reaches the bundle. Full breakdown in
 The protocol is defined by four RFCs that cover the full stack from wire transport to the public SDK:
 
 ### [RFC 001 — Transport & Discovery](specs/RFC_001-Transport-&-Discovery.md)
-Peer-to-peer QUIC transport, `did:key` addressing, mDNS local discovery, NAT traversal via Iroh STUN hole-punching, and DERP relay fallback. Defines the 12-byte wire frame header and nine multiplexed sub-stream types (`0x01`–`0x09`).
+Peer-to-peer QUIC transport, `did:key` addressing, mDNS local discovery, NAT traversal via Iroh STUN hole-punching, and DERP relay fallback. Defines the 12-byte wire frame header and ten multiplexed sub-stream types (`0x01`–`0x0A`).
 
 ### [RFC 002 — Data Sync & Schema Lenses](specs/RFC_002-Data-Sync.md)
 Multi-document Automerge CRDT architecture, Bounded Sparse Merkle Tree (depth 16, so 65,536 leaves — but the working cap is **4,096 members per channel**, because rebuild cost is O(N·D)) with Poseidon hashing and deterministic lowest-index eviction, and declarative JSON Schema Lenses for cross-version compatibility.
@@ -390,7 +390,7 @@ Every frame on the wire carries a 12-byte binary header:
 └──────────┴─────────────┴───────┴────────────┴──────────┘
 ```
 
-Nine multiplexed sub-streams over a single QUIC connection:
+Ten multiplexed sub-streams over a single QUIC connection:
 
 | ID | Stream | Purpose |
 |---|---|---|
@@ -403,6 +403,7 @@ Nine multiplexed sub-streams over a single QUIC connection:
 | `0x07` | Ephemeral | Presence, typing, read receipts — delivered, never stored |
 | `0x08` | Peer Profiles | Self-published name, bio and picture; paired peers only |
 | `0x09` | Blob Transfer | Content-addressed images and files, requested by hash |
+| `0x0A` | Pairing Requests | A stranger's ticket and claimed name — the only stream an unpaired peer may use |
 
 
 ---

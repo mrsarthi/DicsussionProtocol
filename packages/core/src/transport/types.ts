@@ -68,6 +68,26 @@ export const StreamType = {
    * there rather than starting again.
    */
   BLOB: 0x09,
+  /**
+   * A stranger asking to be paired — the one thing an unpaired peer may
+   * send (RFC 001 §6.4).
+   *
+   * A completed handshake proves the far side holds the secret behind
+   * its `did:key`, and nothing else. It does **not** disclose that
+   * peer's X25519 encryption key, which is derived under a separate HKDF
+   * label and cannot be recovered from the identifier. So a node that
+   * receives a connection from someone it has never met has no way to
+   * encrypt for them, and no way to dial them back — which is why
+   * pairing has had to happen entirely out of band.
+   *
+   * This carries the initiator's own ticket, so a recipient who accepts
+   * has the material to pair without anyone copying a string by hand.
+   *
+   * The exception is deliberately narrow: one request per connection,
+   * sealed under the session key, and the ticket must belong to the
+   * `did:key` the handshake already proved.
+   */
+  PAIRING_REQUEST: 0x0a,
 } as const;
 
 export type StreamTypeValue = (typeof StreamType)[keyof typeof StreamType];

@@ -140,6 +140,64 @@ they arrived.
 
 ---
 
+### Knocking, so nobody has to paste a ticket
+
+Pasting is not a UX choice — until 0.8.0 it was the only way. The
+handshake proves a `did:key` and carries nothing else: not the peer's
+encryption key, which is derived under a separate label and cannot be
+computed from the identifier, and not their addresses. So a node that
+receives a connection from a stranger knows exactly who is calling and
+can neither encrypt for them nor dial them back.
+
+A pairing request carries the material that closes that gap:
+
+```ts
+// Alice, having dialled Bob's ticket from a QR code or link:
+await alice.connect(bob.getTicket());
+await alice.requestPairing(bob.did, { displayName: 'Alice' });
+
+// Bob:
+bob.onPairingRequest.on('request', (request) => {
+  // request.peerDid      — proven by the handshake
+  // request.ticket       — hers, bound to that did:key
+  // request.displayName  — 'Alice', and only a claim
+  bob.acceptPairingRequest(request);   // or declinePairingRequest(request)
+});
+```
+
+Accepting is `addPeer` with the ticket's key. Both sides are now paired —
+Alice registered Bob by dialling his ticket, Bob registered Alice by
+accepting — and the existing connection starts working immediately. No
+redial.
+
+A knock may arrive before your interface is listening, and a stranger
+only gets to send one, so read the backlog too:
+
+```ts
+for (const request of client.pendingPairingRequests()) { /* show it */ }
+```
+
+**Send it when your ticket is ready.** `requestPairing` sends a snapshot
+of how reachable you are, and it is naturally called moments after
+connecting — when the least is known. Too early and it carries LAN
+addresses only: fine on the same network, undialable from anywhere else,
+and it surfaces later as a contact who cannot be reached rather than as a
+failed request. Section 8 covers this; wait for `getTicket().derpRelay`
+where crossing networks matters.
+
+**This is the only thing an unpaired peer may send**, once per
+connection. Messages, presence, profiles and blobs all stay shut to them
+before and after knocking.
+
+> **The name is a claim, and the accept button is why.** Their `did:key`
+> is proven and their ticket is bound to it, so nobody can knock using
+> someone else's. What no protocol can tell you is whether the person
+> behind that identifier is who the name says. That judgement is the
+> user's, so present the name as something asserted — and once they
+> accept, a nickname your app stores locally should take precedence.
+
+---
+
 ## 4. Every conversation has a guest list
 
 **Pairing is not the same as belonging to a conversation.**

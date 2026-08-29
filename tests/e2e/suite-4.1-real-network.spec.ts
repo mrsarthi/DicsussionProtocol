@@ -450,3 +450,25 @@ test.describe('Suite 4.1 — Departure over QUIC', () => {
     }
   });
 });
+
+test.describe('Suite 4.1 — Knocking over QUIC', () => {
+  test('the pairing stream is opened like any other', async () => {
+    const pair = await connectedPair();
+
+    try {
+      // The in-process transport opens sub-streams on demand and has
+      // hidden exactly this three times: a type declared but not opened
+      // throws "sub-stream is not open" on first send, over real QUIC
+      // only.
+      const received = nextFrame(pair.accepted, StreamType.PAIRING_REQUEST);
+      await pair.dialed.send(
+        StreamType.PAIRING_REQUEST,
+        new TextEncoder().encode('knock'),
+      );
+
+      expect(new TextDecoder().decode(await received)).toBe('knock');
+    } finally {
+      await pair.teardown();
+    }
+  });
+});
