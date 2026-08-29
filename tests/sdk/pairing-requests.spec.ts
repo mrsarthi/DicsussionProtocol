@@ -329,3 +329,59 @@ test.describe('Pairing request wire format', () => {
     expect(decodeRequest(new Uint8Array(0), 'did:key:zAlice')).toBeUndefined();
   });
 });
+
+test.describe('SDK — a profile set before being accepted', () => {
+  test('arrives once the knock is accepted', async () => {
+    const [alice, bob] = await knockingPair();
+
+    try {
+      await alice.requestPairing(bob.did, { displayName: 'Alice' });
+      await settle();
+
+      // Set while Bob still treats her as a stranger. He drops it,
+      // correctly — and nothing used to re-send it, because she has no
+      // way to learn he later accepted. That left an accepted peer
+      // nameless until she happened to edit her profile again.
+      await alice.identity.setMyProfile({ displayName: 'Alice', bio: 'hi' });
+      await settle();
+      expect(bob.identity.getPeerProfile(alice.did)).toBeUndefined();
+
+      bob.acceptPairingRequest(bob.pendingPairingRequests()[0]!);
+      await settle(1500);
+
+      expect(bob.identity.getPeerProfile(alice.did)?.bio).toBe('hi');
+    } finally {
+      await alice.disconnect();
+      await bob.disconnect();
+    }
+  });
+
+  test('the exchange settles instead of echoing', async () => {
+    const [alice, bob] = await knockingPair();
+
+    try {
+      // Both sides answer a received profile with their own, so without
+      // a per-connection guard they would reply to each other forever.
+      await alice.identity.setMyProfile({ displayName: 'Alice' });
+      await bob.identity.setMyProfile({ displayName: 'Bob' });
+
+      let atAlice = 0;
+      let atBob = 0;
+      alice.identity.onPeerProfile(() => atAlice++);
+      bob.identity.onPeerProfile(() => atBob++);
+
+      await alice.requestPairing(bob.did, { displayName: 'Alice' });
+      await settle();
+      bob.acceptPairingRequest(bob.pendingPairingRequests()[0]!);
+      await settle(2500);
+
+      expect(bob.identity.getPeerProfile(alice.did)?.displayName).toBe('Alice');
+      expect(alice.identity.getPeerProfile(bob.did)?.displayName).toBe('Bob');
+      expect(atAlice).toBe(1);
+      expect(atBob).toBe(1);
+    } finally {
+      await alice.disconnect();
+      await bob.disconnect();
+    }
+  });
+});

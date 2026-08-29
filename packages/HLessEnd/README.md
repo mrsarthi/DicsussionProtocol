@@ -118,6 +118,10 @@ connection, everything else still shut to them.
 
 If your app keeps a local nickname, it should win from that point on.
 
+Accepting also asks them for their profile, so a name and picture they
+published while you still treated them as a stranger arrive on accept
+rather than waiting until they next edit it.
+
 ---
 
 ## Conversations have a guest list

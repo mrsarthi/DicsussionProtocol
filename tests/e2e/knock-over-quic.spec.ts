@@ -72,3 +72,35 @@ test.describe('Knocking end to end over QUIC', () => {
     }
   });
 });
+
+test.describe('Profiles after a knock, over QUIC', () => {
+  test('a profile published before acceptance arrives on accept', async () => {
+    const alice = await DicsussionClient.init({ storagePath: ':memory:' }, opts);
+    const bob = await DicsussionClient.init({ storagePath: ':memory:' }, opts);
+
+    try {
+      await alice.connect(bob.getTicket());
+      await settle();
+      await alice.requestPairing(bob.did, { displayName: 'Alice' });
+      await settle();
+
+      // Published while Bob still treats her as a stranger, so he drops
+      // it. Nothing resends it on its own — she cannot learn she was
+      // accepted — so before this was fixed she stayed nameless until
+      // she happened to edit her profile again.
+      await alice.identity.setMyProfile({ displayName: 'Alice', bio: 'boats' });
+      await settle();
+      expect(bob.identity.getPeerProfile(alice.did)).toBeUndefined();
+
+      // Bob has no profile of his own, which is the case that matters:
+      // announcing on accept sends nothing, so accepting has to ask.
+      bob.acceptPairingRequest(bob.pendingPairingRequests()[0]!);
+      await settle(2500);
+
+      expect(bob.identity.getPeerProfile(alice.did)?.bio).toBe('boats');
+    } finally {
+      await alice.disconnect();
+      await bob.disconnect();
+    }
+  });
+});

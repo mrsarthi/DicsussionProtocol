@@ -210,6 +210,12 @@ export class DicsussionClient {
    * only notification a stranger gets to send would otherwise be lost.
    */
   private readonly knocks = new Map<string, PairingRequest>();
+  /**
+   * Peers our profile has been sent to on their current connection.
+   *
+   * Cleared when the connection ends, so reconnecting re-announces.
+   */
+  private readonly offeredProfileTo = new Set<string>();
   private blobStore: BlobService | null = null;
   private voucherService: VoucherService | null = null;
   private voucherHandshake: VoucherHandshake | null = null;
@@ -292,7 +298,27 @@ export class DicsussionClient {
         this.chat._emitEphemeral(peerDid, channelId, payload);
       },
       onProfile: async (peerDid, encoded) => {
+        const connection = this.peers.getPeer(peerDid)?.connection;
+
+        // An empty frame is a peer saying they have just paired us and
+        // asking for ours. It carries no profile to ingest.
+        //
+        // A profile set while they still considered us a stranger was
+        // correctly dropped, and nothing re-sent it — they had no way to
+        // tell us they had accepted. That left an accepted peer nameless
+        // until they happened to edit their profile again, which is the
+        // ordinary case now that a knock can be accepted.
+        if (encoded.length === 0) {
+          if (connection) this.offerProfile(connection);
+          return;
+        }
+
         await this.profiles?.ingestRemote(peerDid, encoded);
+
+        // Receiving one is also evidence they have paired us, so answer
+        // in kind — bounded to once per connection, or the two sides
+        // would reply to each other forever.
+        if (connection) this.offerProfile(connection);
       },
       onPairingRequest: async (peerDid, payload) => {
         // Validation lives in the codec, which binds the ticket to the
@@ -434,7 +460,18 @@ export class DicsussionClient {
     // reconnection instead would leave them nameless for as long as the
     // connection happens to last.
     const connection = this.peers.getPeer(did)?.connection;
-    if (connection) this.offerProfile(connection);
+    if (!connection) return;
+
+    this.offerProfile(connection);
+
+    // And ask for theirs. Announcing alone is not enough: a node with no
+    // profile of its own sends nothing, leaving the peer it just
+    // accepted with no way to learn it may now speak.
+    void this.sessions
+      .sendProfileTo(connection, new Uint8Array(0))
+      .catch(() => {
+        // They announce again on the next connection.
+      });
   }
 
   /**
@@ -520,8 +557,15 @@ export class DicsussionClient {
   private offerProfile(connection: IConnection): void {
     if (this.peers.getPeer(connection.peerDid)?.paired !== true) return;
 
+    // Once per connection. Offering is also the reply to *receiving* a
+    // profile, and without this the two sides would answer each other
+    // forever.
+    if (this.offeredProfileTo.has(connection.peerDid)) return;
+
     const encoded = this.profiles?.encodeMine();
     if (!encoded) return;
+
+    this.offeredProfileTo.add(connection.peerDid);
 
     void this.sessions.sendProfileTo(connection, encoded).catch(() => {
       // The peer gets it on the next connection; failing to announce a
@@ -583,6 +627,7 @@ export class DicsussionClient {
   /** Report a connection ending, once, to whoever is listening. */
   private watchForClose(connection: IConnection): void {
     connection.onClose(() => {
+      this.offeredProfileTo.delete(connection.peerDid);
       this.onPeerDisconnected.emit('peer', {
         peerDid: connection.peerDid,
         at: Math.floor(Date.now() / 1000),

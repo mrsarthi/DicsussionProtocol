@@ -1137,6 +1137,44 @@ longer optional for anything touching the wire.
 
 ---
 
+## Task: an accepted peer stayed nameless
+
+Found while verifying the **published** 0.7.3 from the registry, over
+real QUIC — not in the suite, which passed.
+
+Alice knocks. Alice sets a profile while Bob still treats her as a
+stranger, so Bob correctly drops it. Bob accepts. Alice's profile never
+arrives, because nothing re-sends it: she has no way to learn she was
+accepted. She stays nameless until she happens to edit her profile again.
+
+Pre-existing since 0.7.0 for any "stranger dials, we accept later" flow.
+0.7.3 made that the *ordinary* path, so it went from a corner to the
+common case.
+
+### Two attempts, because the first was half a fix
+Reciprocating on receipt — answer a profile with your own — closes it
+only when the accepting side happens to have a profile. Bob had none, so
+he sent nothing, so there was nothing for Alice to answer. The test
+caught it; the reasoning had not.
+
+An **empty `0x08` payload** is now a request: "I have paired you, send
+yours". Sent on accepting a peer that is already connected, regardless of
+whether the accepter has anything to announce.
+
+Bounded to one offer per connection, cleared on close. Both sides treat a
+received profile as evidence of pairing and answer in kind, so without
+the guard they reply to each other forever. There is a test asserting the
+exchange settles at exactly one event each way.
+
+### Method note
+The suite passed. The registry check over QUIC did not. The difference
+was a flow the tests exercised in one direction only — profiles were
+tested with the *accepter* holding one. Worth remembering that "verified
+over real QUIC" caught the transport-shaped bugs, and this one was caught
+simply by driving the feature the way an application actually would.
+
+---
+
 ## Current State (2026-08-25)
 
 | | |

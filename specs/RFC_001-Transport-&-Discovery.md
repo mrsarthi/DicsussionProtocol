@@ -294,6 +294,23 @@ The name in a profile is what a peer calls themselves, which is not
 necessarily what an application should display. An application holding a
 locally-assigned name SHOULD prefer it.
 
+**An empty `0x08` payload is a request**, meaning "I have paired you;
+send yours if you have one". A node MUST send one to a peer it has just
+paired while already connected, and SHOULD answer one by sending its
+profile.
+
+This exists because pairing is not symmetric in time. A peer that
+published a profile while the other side still treated it as a stranger
+had that profile correctly dropped, and has no way to learn it was later
+accepted — so nothing would resend it, and the accepted peer would stay
+nameless until it happened to edit its profile again. Announcing on
+pairing is not sufficient on its own: a node with no profile of its own
+sends nothing, and the peer learns nothing from silence.
+
+A node SHOULD answer at most once per connection. Both sides treat a
+received profile as evidence of having been paired and reply in kind, so
+an unbounded rule has them answering each other indefinitely.
+
 ### 6.3 Blob Transfer (`0x09`)
 
 Stream `0x09` moves content-addressed bytes — images and files — outside
