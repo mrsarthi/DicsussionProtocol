@@ -23,6 +23,7 @@ scan reveals. Every ❌ below names the specific dependency that blocks it.
 | Peer profiles (0x08) | ✅ | ✅ | ✅ |
 | Blob transfer (0x09) | ✅ | ✅ | ✅ |
 | Pairing requests (0x0A) | ✅ | ✅ | ✅ |
+| Sealed messages (0x0B) | ✅ | ✅ | ✅ |
 | mDNS discovery | ✅ | ⚠️ | ❌ |
 
 **Browsers are supported.** Import from `@dicsussion/sdk/browser`, supply

@@ -1175,12 +1175,73 @@ simply by driving the feature the way an application actually would.
 
 ---
 
+## Task: messages for someone who is asleep (Stream `0x0b`)
+
+The app's analysis was exactly right and I verified each part before
+building on it. Every stream seals under the session key from the §5
+handshake, which exists only while both peers are connected: no peer, no
+session, no key, nothing to store. Offline delivery was not an unbuilt
+feature of `0x02` — it was outside its shape.
+
+A ticket already publishes a static X25519 key. `encryptForPeer` already
+implements `crypto_box_seal`. The material was there and unused.
+
+### The decision that was actually asked
+**Static-key sealing now, prekeys later.** I agreed, but for a firmer
+reason than "prekeys are more work": a batch of one-time prekeys needs
+somewhere to be **published** and a way to be **refilled** when
+exhausted. No relay ships, so there is nowhere to put them and no channel
+to replenish over. Building the harder half of X3DH against
+infrastructure whose shape is undecided would mean redoing it.
+
+The cost is written down rather than implied, in RFC 001 §6.5, the
+module header, the guide, the SDK README, and the release notes: **a
+sealed message has no forward secrecy.** If the long-term key leaks,
+every envelope an adversary retained opens. Live `0x02` traffic is
+unaffected.
+
+### Where I departed from the spec, and why
+The spec said "a signature over the ciphertext, inside the sealed
+payload". That is circular — the ciphertext encrypts the payload the
+signature sits in.
+
+More importantly, signing the payload alone authenticates the author and
+still lets **the recipient re-seal that message to a third party**, where
+it verifies as genuinely from the original sender. The signature covers a
+transcript naming the sender, **the recipient**, the channel, the id, the
+time, the payload, and this envelope's ephemeral public key; an opener
+checks the transcript names it. There is a test for the forwarding case.
+
+`encryptForPeer` could not be used directly after all: it generates its
+own ephemeral keypair and returns only the public half, but the
+transcript has to name the key of the envelope actually produced. The
+agreement is done in the module so the keypair exists before signing.
+
+### What it refuses
+Size cap, wrong recipient, bad signature, expired, future-dated beyond
+clock skew, unpaired sender, and — via `openSealed` — a sender no longer
+in the conversation. Age is bounded by the **lesser** of the sender's
+stated maximum and ours, or a sender grants itself a century.
+
+`openSealed` returns `undefined` for all of them rather than throwing:
+a caller holding bytes from an untrusted store cannot distinguish the
+cases, and a mix of throwing and returning is impossible to handle
+correctly.
+
+### Delivery without a server
+`deliverSealed` hands an envelope to any paired peer. The carrier need
+not be the recipient and learns nothing by holding it — sealed once to
+the recipient, again under the hop's session key. Tested over real QUIC
+with three nodes where the sender and recipient never connect.
+
+---
+
 ## Current State (2026-08-25)
 
 | | |
 |---|---|
 | Version | **0.7.4**, both packages |
-| Tests | **641 passing, 0 failing** |
+| Tests | **663 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |

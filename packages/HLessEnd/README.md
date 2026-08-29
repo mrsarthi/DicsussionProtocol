@@ -293,6 +293,46 @@ can phrase for a person: `BlobTooLargeError`, `BlobUnavailableError`
 Blobs are **not** deleted when the message referencing them is. A peer
 who has not synced yet holds references this device cannot see.
 
+## Sending to someone who is asleep
+
+Everything else here is encrypted with a key that exists only while both
+people are connected. That is why offline delivery was not merely
+unbuilt: with nobody there, there is no key and nothing to store.
+
+A sealed message is encrypted to the long-term key their ticket already
+carries, which exists whether or not they are awake.
+
+```ts
+const envelope = await client.sealForPeer(theirDid, {
+  channelId: 'general',
+  content: 'read this when you wake up',
+});
+
+// Opaque bytes. Hand them to anything — a mailbox, a file, a peer:
+await client.deliverSealed(courierDid, envelope);
+
+// On the other side, whenever it arrives:
+await client.openSealed(envelope);   // → SdkChatMessage | undefined
+```
+
+Opening runs the same path as a live message, so it reaches `onMessage`,
+lands in history, and is de-duplicated by id — one that arrived both ways
+is surfaced once.
+
+An envelope names nobody. Whoever stores it learns neither the sender,
+the recipient, nor the conversation. It refuses to open if it was not for
+you, is not signed by who it claims, has expired, is oversized, or comes
+from someone you have not paired.
+
+A courier need not be the recipient, and cannot read what it carries.
+
+> **Sealed messages have no forward secrecy.** They are encrypted to a
+> key that does not rotate, so if it ever leaks, every envelope an
+> adversary kept opens — including old ones. Live traffic is unaffected.
+> The fix is one-time prekeys, which need a relay to publish and refill
+> them; none ships yet. Worth knowing before you store envelopes
+> anywhere you do not control.
+
 ## Storage and transport are chosen for the host
 
 | Host | Storage | Transport |
@@ -362,6 +402,10 @@ client.pendingPairingRequests()
 client.acceptPairingRequest(request)
 client.declinePairingRequest(request)
 
+await client.sealForPeer(theirDid, { channelId, content })
+await client.openSealed(envelope)
+await client.deliverSealed(peerDid, envelope)
+
 client.getNetworkStatus()        // { connected, peerCount, relayActive, … }
 client.onNetworkStatus.on('status', (s) => {})
 client.onPeerDisconnected.on('peer', ({ peerDid, at }) => {})
@@ -386,7 +430,8 @@ before handing it out.
 
 ## What this does not do yet
 
-- No relay server ships, so no offline delivery to a sleeping device
+- No relay server ships. `sealForPeer` produces an envelope that
+  survives being stored, but nothing to store it in ships with the SDK
 - Forward secrecy is per-session, not per-message — no double ratchet
 - One device per identity; no multi-device sync
 - ZK proving is Node-only (artifacts load from the filesystem)

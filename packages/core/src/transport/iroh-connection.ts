@@ -57,6 +57,9 @@ export const STREAM_PRIORITY: Record<number, number> = {
   // Above chat: a knock is a person waiting on a screen, and there is at
   // most one of them per connection.
   [StreamType.PAIRING_REQUEST]: 25,
+  // With chat: a stored message is still a message, and one being
+  // delivered late should not queue behind bulk transfer.
+  [StreamType.SEALED_MESSAGE]: 20,
 };
 
 /** Bytes requested per read. Frames are reassembled, so this is a hint. */

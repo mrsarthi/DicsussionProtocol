@@ -88,6 +88,26 @@ export const StreamType = {
    * `did:key` the handshake already proved.
    */
   PAIRING_REQUEST: 0x0a,
+  /**
+   * A message sealed to a peer's long-term key (RFC 001 §6.5).
+   *
+   * Everything else here is sealed under the session key agreed during
+   * the handshake, which exists only while both peers are connected.
+   * That is what makes offline delivery impossible rather than merely
+   * unbuilt: with no peer there is no session, no key, and nothing that
+   * could be stored for later.
+   *
+   * This is sealed instead to the static X25519 key a ticket already
+   * carries — material that exists while the recipient is asleep. The
+   * envelope is opaque and safe to hand to anything: a mailbox, a
+   * courier peer, a file.
+   *
+   * The cost is stated rather than hidden: a message resting in a
+   * mailbox has **no forward secrecy**. If that long-term key ever
+   * leaks, every envelope anyone captured opens. Live traffic on `0x02`
+   * keeps its per-session secrecy and is unaffected.
+   */
+  SEALED_MESSAGE: 0x0b,
 } as const;
 
 export type StreamTypeValue = (typeof StreamType)[keyof typeof StreamType];

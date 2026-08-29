@@ -104,3 +104,44 @@ test.describe('Profiles after a knock, over QUIC', () => {
     }
   });
 });
+
+test.describe('Sealed delivery over QUIC', () => {
+  test('a courier carries a message between peers that never meet', async () => {
+    const alice = await DicsussionClient.init({ storagePath: ':memory:' }, opts);
+    const bob = await DicsussionClient.init({ storagePath: ':memory:' }, opts);
+    const carol = await DicsussionClient.init({ storagePath: ':memory:' }, opts);
+
+    try {
+      // Alice and Bob are paired and never connect to each other. Carol
+      // is the only one who reaches Bob.
+      alice.addPeer(bob.did, bob.encryptionPublicKey);
+      bob.addPeer(alice.did, alice.encryptionPublicKey);
+      alice.chat.createChannel('room', [bob.did]);
+      bob.chat.createChannel('room', [alice.did]);
+
+      carol.addPeer(bob.did, bob.encryptionPublicKey);
+      bob.addPeer(carol.did, carol.encryptionPublicKey);
+      await carol.connect(bob.getTicket());
+      await settle();
+
+      const envelope = await alice.sealForPeer(bob.did, {
+        channelId: 'room',
+        content: 'carried over QUIC',
+      });
+
+      const heard = new Promise<string>((resolve) => {
+        bob.chat.onMessage('room', (m) => resolve(m.content));
+      });
+
+      expect(await carol.deliverSealed(bob.did, envelope)).toBe(true);
+      expect(await heard).toBe('carried over QUIC');
+
+      // Carol relayed it and still cannot read it.
+      expect(await carol.openSealed(envelope)).toBeUndefined();
+    } finally {
+      await alice.disconnect();
+      await bob.disconnect();
+      await carol.disconnect();
+    }
+  });
+});

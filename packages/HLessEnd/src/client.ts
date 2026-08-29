@@ -10,6 +10,7 @@
  */
 
 import { sha256 } from '@noble/hashes/sha2.js';
+import { v4 as uuidv4 } from 'uuid';
 
 import { Emitter } from '@dicsussion/core/transport';
 import type { BlindPublicKey } from '@dicsussion/core/crypto';
@@ -46,6 +47,7 @@ import {
   MAX_REQUEST_NAME_LENGTH,
 } from './pairing-request.js';
 import { PeerRegistry } from './peer-registry.js';
+import { open as openSealed, seal } from './sealed-message.js';
 import { ProfileService } from './profile-service.js';
 import type { MessagePayload } from './message-codec.js';
 import { SessionManager } from './session-manager.js';
@@ -77,6 +79,8 @@ import type {
   NetworkStatus,
   PeerConnectedEvent,
   PeerDisconnectedEvent,
+  SdkChatMessage,
+  SendMessageOptions,
 } from './types.js';
 
 /** A transport that knows how it is reachable and can publish a ticket. */
@@ -341,6 +345,12 @@ export class DicsussionClient {
       onBlobFrame: async (peerDid, payload) => {
         await this.blobStore?.handleFrame(peerDid, payload);
       },
+      onSealedMessage: async (envelope) => {
+        // Every check lives in `openSealed`, including who actually
+        // wrote it. The peer handing it over is only a courier and its
+        // identity says nothing about the message's.
+        await this.openSealed(envelope).catch(() => undefined);
+      },
       syncEngine: this.syncEngine,
       membershipSync: this.membershipSync,
       onMessage: async (payload) => {
@@ -472,6 +482,116 @@ export class DicsussionClient {
       .catch(() => {
         // They announce again on the next connection.
       });
+  }
+
+  /**
+   * Seal a message for a peer who may be offline.
+   *
+   * Everything on `0x02` is sealed under the session key agreed during
+   * the handshake, which exists only while both peers are connected —
+   * so with nobody there, there is no key and nothing to store. This
+   * seals to the static X25519 key their ticket already carries, which
+   * exists while they are asleep.
+   *
+   * The result is opaque and safe to hand to anything: a mailbox, a
+   * courier peer, a file. It carries no readable indication of who wrote
+   * it, who it is for, or which conversation it belongs to.
+   *
+   * **A sealed message has no forward secrecy.** It is encrypted to a
+   * key that does not rotate, so if that key ever leaks, every envelope
+   * anyone captured opens — including ones stored long ago. Live traffic
+   * is unaffected. See `sealed-message.ts` for why prekeys are the fix
+   * and why they wait on a relay existing.
+   *
+   * @throws If the peer is unknown, or the envelope exceeds
+   *   `MAX_SEALED_BYTES`.
+   */
+  async sealForPeer(
+    peerDid: string,
+    options: SendMessageOptions,
+  ): Promise<Uint8Array> {
+    const peer = this.peers.getPeer(peerDid);
+    if (!peer) {
+      throw new Error(
+        `Unknown peer ${peerDid}. Call addPeer() with their X25519 key ` +
+          'first — sealing needs the key their ticket carries.',
+      );
+    }
+
+    const identity = this.requireIdentity();
+
+    return seal(
+      {
+        id: uuidv4(),
+        channelId: options.channelId,
+        authorDid: identity.did,
+        content: options.content,
+        attachments: options.attachments,
+        replyTo: options.replyTo,
+        timestamp: Math.floor(Date.now() / 1000),
+        // Sender-assigned ordering still applies: a stored message takes
+        // its place in the thread by the same rule as a live one.
+        messageIndex: this.documents.getMessageCount(options.channelId),
+      },
+      identity.did,
+      identity.signing.secretKey,
+      peerDid,
+      peer.encryptionKey,
+    );
+  }
+
+  /**
+   * Open an envelope that arrived out of band.
+   *
+   * Runs through the same path as a message from a live connection, so
+   * it lands in history, reaches `onMessage`, and is de-duplicated by id
+   * against anything already delivered — a message that arrived both
+   * ways is surfaced once.
+   *
+   * @returns The message, or `undefined` if the envelope was not for us,
+   *   not signed by who it claims, expired, oversized, or from someone
+   *   we have not paired.
+   */
+  async openSealed(bytes: Uint8Array): Promise<SdkChatMessage | undefined> {
+    const identity = this.requireIdentity();
+
+    const result = openSealed(bytes, {
+      selfDid: identity.did,
+      encryptionSecret: identity.encryption.secretKey,
+      // The same rule live traffic obeys. Without it, anyone who learns
+      // a mailbox address has an unfiltered inbox to write to.
+      isPaired: (did) => this.peers.getPeer(did)?.paired === true,
+    });
+
+    if (!result.ok) return undefined;
+
+    // Membership is checked as it is on `0x02`: only for a conversation
+    // this node already has an opinion about, so a first message from a
+    // paired peer still opens a new conversation.
+    const { channelId } = result.opened.payload;
+    if (
+      this.documents.hasDocument(channelId) &&
+      !this.documents.isParticipant(channelId, result.opened.senderDid)
+    ) {
+      return undefined;
+    }
+
+    return this.chat.ingestRemote(result.opened.payload);
+  }
+
+  /**
+   * Hand a sealed envelope to a connected peer.
+   *
+   * The peer need not be its recipient. A message can be left with
+   * whoever is reachable and carried onward, which is what makes
+   * delivery possible without a server — an envelope is opaque, so a
+   * courier learns nothing by holding it.
+   *
+   * @returns Whether the peer was reachable. `false` means not
+   *   connected, or not paired.
+   */
+  async deliverSealed(peerDid: string, envelope: Uint8Array): Promise<boolean> {
+    return this.sessions.sendSealedTo(peerDid, envelope);
   }
 
   /**

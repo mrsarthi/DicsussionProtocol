@@ -80,6 +80,13 @@ export interface SessionManagerDeps {
     peerDid: string,
     payload: Uint8Array,
   ) => Promise<void>;
+  /**
+   * A paired peer delivered an envelope sealed to our long-term key.
+   *
+   * The carrier need not be its author — that is the point of a stored
+   * message. Who wrote it is established by the signature inside.
+   */
+  readonly onSealedMessage?: (payload: Uint8Array) => Promise<void>;
   readonly syncEngine: CrdtSyncEngine;
   /** Hand a decrypted message to the chat layer. */
   readonly onMessage: (payload: MessagePayload) => Promise<void>;
@@ -336,6 +343,25 @@ export class SessionManager {
     return true;
   }
 
+  /**
+   * Hand a sealed envelope to a peer.
+   *
+   * Sealed twice over: to the recipient's long-term key by the author,
+   * and again under this connection's session key like everything else,
+   * so a carrier that is neither end learns nothing from relaying it.
+   */
+  async sendSealedTo(peerDid: string, envelope: Uint8Array): Promise<boolean> {
+    const peer = this.deps.peers.getPeer(peerDid);
+    if (!peer?.paired || !peer.connection) return false;
+
+    await peer.connection.send(
+      StreamType.SEALED_MESSAGE,
+      sealOpaque(envelope, peer.connection.sessionKey, currentEpoch()),
+    );
+
+    return true;
+  }
+
   /** Send our profile to one peer, on connecting or on being paired. */
   async sendProfileTo(
     connection: IConnection,
@@ -435,6 +461,11 @@ export class SessionManager {
           break;
         case StreamType.EPHEMERAL:
           this.handleEphemeralFrame(frame, connection);
+          break;
+        case StreamType.SEALED_MESSAGE:
+          await this.deps.onSealedMessage?.(
+            openOpaque(frame.payload, connection.sessionKey),
+          );
           break;
         case StreamType.BLOB:
           await this.deps.onBlobFrame?.(

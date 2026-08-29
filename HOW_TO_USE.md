@@ -595,13 +595,81 @@ const quoted = message.replyTo
 
 ---
 
-## 11. What this does not do yet
+## 11. Sending to someone who is asleep
+
+Everything else in this guide is encrypted with a key that exists only
+while both people are connected. So a message to someone who is offline
+had nowhere to go — not because delivery was unbuilt, but because there
+was no key to encrypt with and nothing to store.
+
+A sealed message is encrypted to the long-term key their ticket already
+carries, which exists whether or not they are awake.
+
+```ts
+const envelope = await client.sealForPeer(theirDid, {
+  channelId: 'general',
+  content: 'read this when you wake up',
+});
+```
+
+`envelope` is opaque bytes. Put it anywhere — a file, a server you run, a
+peer who happens to be reachable:
+
+```ts
+await client.deliverSealed(courierDid, envelope);
+```
+
+And on the other side, whenever it turns up:
+
+```ts
+const message = await client.openSealed(envelope);
+```
+
+That runs the same path a live message does, so it reaches `onMessage`,
+appears in `getHistory`, and is de-duplicated by id. One that arrived
+both by courier and over a connection is shown once.
+
+### What it refuses, and why you do not have to check
+
+`openSealed` returns `undefined` rather than throwing, for any of: not
+addressed to you, not signed by whoever it claims, expired, oversized, or
+from someone you have not paired. A caller holding raw bytes from an
+untrusted store cannot make those checks itself, so the SDK makes all of
+them.
+
+Two are worth understanding:
+
+- **Signed, not merely decryptable.** Decrypting proves only that
+  something was sealed *to you*. Your key comes from a shareable ticket,
+  so without a signature anyone who learned a mailbox address could write
+  to it claiming to be anyone.
+- **Bound to you specifically.** The signature names the recipient, so a
+  message sealed to you cannot be re-sealed onward and still verify as
+  its author's.
+
+An envelope names nobody. Whoever stores it learns neither sender,
+recipient, nor conversation.
+
+> **The one real limitation.** Sealed messages have **no forward
+> secrecy**. They are encrypted to a key that never rotates, so if that
+> key ever leaks, every envelope an adversary kept opens — including ones
+> stored months ago. Live traffic keeps its per-message secrecy and is
+> unaffected.
+>
+> The fix is one-time prekeys, which need somewhere to publish a batch
+> and a way to refill it. That waits on a relay existing. Until then:
+> fine for delivery through something you control, worth thinking about
+> before storing envelopes somewhere you do not.
+
+---
+
+## 12. What this does not do yet
 
 Stated plainly, because the alternative is you finding out later.
 
-- **No relay server ships.** The SDK speaks the relay protocol; no
-  reference implementation exists. Offline delivery to a sleeping phone
-  needs one.
+- **No relay server ships.** Section 11 gives you an envelope that
+  survives being stored; nothing to store it in comes with the SDK, so
+  delivery to a sleeping phone still needs somewhere to leave it.
 - **`WebSocketTransport` does not hide traffic from the relay.** Chat
   bodies are sealed, but CRDT sync, revocation gossip, and voucher
   traffic cross a relay readable. A relay operator can reconstruct the
@@ -621,7 +689,7 @@ Identity recovery *is* supported: `identity.exportMnemonic()` and
 
 ---
 
-## 12. Further reading
+## 13. Further reading
 
 - [`packages/HLessEnd/README.md`](packages/HLessEnd/README.md) — SDK
 - [`packages/core/README.md`](packages/core/README.md) — engine, custom transports

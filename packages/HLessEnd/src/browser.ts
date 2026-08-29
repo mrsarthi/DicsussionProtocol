@@ -87,6 +87,11 @@ export {
   BlobUnavailableError,
   MAX_BLOB_BYTES,
 } from './blob-service.js';
+export type { OpenedSeal, SealedRejection } from './sealed-message.js';
+export {
+  DEFAULT_MAX_AGE_S,
+  MAX_SEALED_BYTES,
+} from './sealed-message.js';
 export type { PairingRequest } from './pairing-request.js';
 export {
   MAX_REQUEST_BYTES,

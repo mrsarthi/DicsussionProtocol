@@ -261,6 +261,26 @@ export class DicsussionClient {
   /** Discard a request without pairing. */
   declinePairingRequest(request: PairingRequest): void;
 
+  /**
+   * Seal a message for a peer who may be offline (RFC 001 §6.5).
+   *
+   * Opaque bytes, safe to hand to a store the application does not
+   * control. Sealed to the recipient's long-term key rather than a
+   * session key, which is what allows it to be written down at all.
+   */
+  sealForPeer(peerDid: string, options: SendMessageOptions): Promise<Uint8Array>;
+
+  /**
+   * Open one that arrived out of band.
+   *
+   * Emits through the same path as a message from a live connection, so
+   * it is de-duplicated by id against what has already been delivered.
+   */
+  openSealed(bytes: Uint8Array): Promise<SdkChatMessage | undefined>;
+
+  /** Hand an envelope to a connected peer for onward delivery. */
+  deliverSealed(peerDid: string, envelope: Uint8Array): Promise<boolean>;
+
   public static async init(
     config?: ClientConfig,
     runtime?: ClientRuntimeOptions,
@@ -506,6 +526,17 @@ Acceptance is a judgement about which person a `did:key` belongs to, made
 on a self-asserted name, and nothing in the protocol can make it for the
 user. `pendingPairingRequests()` exists because a request may arrive
 before the application subscribes and a peer sends at most one.
+
+`openSealed` MUST return `undefined` rather than raising for every
+rejection an envelope can suffer — not addressed here, unsigned or
+wrongly signed, expired, oversized, or from an unpaired sender. A caller
+holding bytes from an untrusted store cannot distinguish those cases
+itself, and an implementation that raises on some and returns on others
+makes correct handling impossible to write.
+
+Implementations MUST document that sealed messages have no forward
+secrecy (RFC 001 §6.5). It is the one property a reader will assume from
+the rest of the system and not get.
 
 ### 7.4 Conversation Membership
 

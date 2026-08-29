@@ -75,7 +75,7 @@ Every raw frame sent across a transport sub-stream MUST be prefixed with a fixed
 | Offset (Bytes) | Field Name | Type | Description |
 |---|---|---|---|
 | 0..1 | `magic` | `u16` | Fixed protocol identifier (`0x5032`) |
-| 2 | `stream_type` | `u8` | Sub-protocol ID (`0x01` Channel Membership & Automerge State Sync, `0x02` E2EE Message Envelopes, `0x03` Key/Identity/Slashing Revocation Gossip, `0x04` Voucher Issuance Handshakes, `0x05` RLN Signal Broadcast, `0x06` RLN Polynomial Share Exchange, `0x07` Ephemeral Payloads, `0x08` Peer Profiles, `0x09` Blob Transfer, `0x0A` Pairing Requests) |
+| 2 | `stream_type` | `u8` | Sub-protocol ID (`0x01` Channel Membership & Automerge State Sync, `0x02` E2EE Message Envelopes, `0x03` Key/Identity/Slashing Revocation Gossip, `0x04` Voucher Issuance Handshakes, `0x05` RLN Signal Broadcast, `0x06` RLN Polynomial Share Exchange, `0x07` Ephemeral Payloads, `0x08` Peer Profiles, `0x09` Blob Transfer, `0x0A` Pairing Requests, `0x0B` Sealed Messages) |
 | 3 | `flags` | `u8` | Bit flags (`0x01` Compressed via LZ4, `0x02` Priority) |
 | 4..7 | `payload_len` | `u32` | Big-endian length of the following payload bytes |
 | 8..11 | `checksum` | `u32` | CRC32-C checksum of the payload bytes |
@@ -396,6 +396,79 @@ impossible — but it does remove the out-of-band step in which a person
 confirmed which human a `did:key` belongs to. Acceptance is therefore a
 judgement made on a self-asserted name, and an implementation MUST NOT
 pair automatically on receiving a request.
+
+### 6.5 Sealed Messages (`0x0B`)
+
+Stream `0x0B` carries a message sealed to a recipient's **long-term**
+key rather than to a session key.
+
+**Why the other streams cannot do this.** Every stream above is sealed
+under the session key agreed in §5, which exists only while both peers
+are connected. With no peer there is no session, no key, and therefore
+nothing that could be stored and delivered later. Offline delivery is
+not an unbuilt feature of those streams; it is outside their shape.
+
+A ticket already publishes a static X25519 key (§3.3). Sealing to it is
+what makes an envelope storable by something that is not either endpoint.
+
+**Envelope.** `crypto_box_seal`'s construction:
+
+    version ‖ ephemeral_pubkey ‖ nonce ‖ ciphertext+tag
+
+The sender MUST generate a fresh ephemeral X25519 keypair per message,
+derive a shared secret against the recipient's static key, derive an AEAD
+key from it, and discard the ephemeral secret. Everything identifying —
+sender, recipient, channel, message — MUST be inside the ciphertext. An
+envelope at rest MUST NOT reveal who wrote it, who it is for, or which
+conversation it belongs to; a store that learned any of those would leak
+the social graph to whoever runs it.
+
+**Authentication.** The sender MUST sign a transcript covering the
+ephemeral public key, its own `did:key`, **the recipient's `did:key`**,
+and the payload, and MUST place that signature inside the ciphertext.
+
+Naming the recipient is not optional. A signature over the payload alone
+authenticates the author and still permits a recipient to re-seal that
+message to a third party, where it verifies as genuinely from the
+original sender. A receiver MUST check that the transcript names it.
+
+The signature cannot cover the ciphertext, which encrypts the payload the
+signature sits in.
+
+**On receipt**, an implementation MUST reject an envelope that:
+
+- exceeds its size cap, which MUST exist so a store can enforce one;
+- does not decrypt, or names a different recipient;
+- carries a signature that does not verify against the sender it claims —
+  decryption proves only that it was sealed to us, so without this,
+  anyone who learns a mailbox address may write to it as anyone;
+- is older than the lesser of the sender's stated maximum age and the
+  receiver's own limit, so a captured envelope cannot be replayed later,
+  and a sender cannot grant itself unbounded life;
+- is dated materially in the future;
+- comes from a peer it has not paired, mirroring the rule on `0x02`.
+  Without this a mailbox address is an unfiltered inbox.
+
+A receiver SHOULD de-duplicate by message id against messages already
+delivered, since an envelope may legitimately arrive both from a store
+and over a live connection.
+
+A carrier need not be the author. An implementation MAY hand an envelope
+to any paired peer for onward delivery; the carrier learns nothing by
+holding it, and the signature inside is what establishes authorship.
+
+**Forward secrecy, and its absence.** A sealed message is encrypted to a
+key that does not rotate. If that key is ever compromised, **every
+envelope an adversary retained can be opened**, including messages sealed
+long before. Live traffic on `0x02` is unaffected and retains
+per-session secrecy.
+
+The remedy is X3DH one-time prekeys: a batch published in advance,
+consumed once per sender, the private half destroyed after use. That
+requires a place to publish a batch and a means of replenishing it when
+exhausted, neither of which exists while no relay is specified. This
+section describes what is implementable now, and is expected to be
+superseded rather than extended.
 
 ---
 
