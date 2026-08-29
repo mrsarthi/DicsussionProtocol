@@ -1240,14 +1240,14 @@ with three nodes where the sender and recipient never connect.
 
 | | |
 |---|---|
-| Version | **0.7.4**, both packages |
+| Version | **0.8.0**, both packages |
 | Tests | **663 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | 0.7.3 on npm; **0.7.4 pending** — 0.7.3 has the profile gap above |
+| Published | 0.7.4 on npm; **0.8.0 pending** |
 | Docs | `HOW_TO_USE.md` + a README on each package |
 
 **Test suites:** 13 e2e, 16 SDK, 15 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT.

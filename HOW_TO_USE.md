@@ -661,6 +661,37 @@ recipient, nor conversation.
 > fine for delivery through something you control, worth thinking about
 > before storing envelopes somewhere you do not.
 
+### If you are running the store
+
+Two very different things get called "a relay", and they have opposite
+security properties. Decide which you are building before you build it.
+
+**A mailbox for sealed envelopes** holds `0x0B` bytes for a recipient who
+is offline. It is safe today. An envelope is opaque: the operator learns
+neither sender, recipient, nor conversation, and cannot open one no
+matter who runs the machine. What it needs is unglamorous — accept bytes
+up to the size cap, hold them, hand them over, drop them when they
+expire. Matching `DEFAULT_MAX_AGE_S` (7 days) means nothing is retained
+past the point the SDK would refuse it anyway.
+
+**A transport relay** carries live traffic for peers that cannot open
+sockets — the `'websocket'` transport. It is **not** equivalent, and it
+is where the known gap lives: `0x01` CRDT sync, `0x03` gossip, `0x04`
+vouchers and the RLN streams cross it in the clear, so its operator can
+reconstruct the membership graph and read message history. See
+`docs/SECURITY_BACKLOG.md` §6. Running one is a decision to trust
+whoever runs it.
+
+**Addressing is not solved for you.** An envelope names nobody, which is
+the point — and it means a mailbox cannot work out who to give it to. The
+obvious fix, having the depositor supply the recipient's `did:key` as a
+routing key, hands the operator the social graph: exactly what sealing
+the envelope was for. A better shape is a per-recipient random mailbox
+id, shared when peers pair and unlinkable to any identity, so the
+operator sees opaque bytes arriving at an opaque address. The SDK does
+not pick one, because the choice belongs to whatever protocol the store
+speaks.
+
 ---
 
 ## 12. What this does not do yet

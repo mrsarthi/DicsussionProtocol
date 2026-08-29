@@ -139,8 +139,9 @@ It must fire once when the connection ends, from either side, and fire
 immediately if attached to one that has already closed. Presence built on
 connection events alone would otherwise switch on and never off.
 
-**Stream types now run `0x01`–`0x0A`**, having gained ephemeral
-signals, peer profiles, blob transfer and pairing requests. If your
+**Stream types now run `0x01`–`0x0B`**, having gained ephemeral
+signals, peer profiles, blob transfer, pairing requests and sealed
+messages. If your
 transport enumerates them, derive the list from `StreamType` rather than
 writing it out: a hand-maintained one silently stops covering a stream
 the day another is added, and the failure appears only at runtime, on the
@@ -151,6 +152,14 @@ transport does not treat it specially — the gate lives above, in the
 session layer — but a relay or bridge operator should know that a single
 frame of it early in a connection marks a social tie forming, and between
 which two identities. The contents are sealed; that fact is not.
+
+**`0x0B` carries messages sealed to a recipient's long-term key** (RFC
+001 §6.5), which is what lets one be stored for a peer who is offline. A
+transport moves it like anything else. Worth knowing if you are building
+something that holds them: the payload is already sealed to its
+recipient before it reaches the transport, so a store learns neither who
+wrote it, who it is for, nor which conversation it belongs to — and
+cannot open one however it is run.
 
 ---
 
