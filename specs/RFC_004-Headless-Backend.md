@@ -266,7 +266,7 @@ export class DicsussionClient {
     runtime?: ClientRuntimeOptions,
   ): Promise<DicsussionClient>;
 
-  /** Register a peer's X25519 key, learned out of band. */
+  /** Register a peer's X25519 key, from a ticket or a §6.4 request. */
   addPeer(did: string, encryptionKey: Uint8Array): void;
 
   /**

@@ -1,6 +1,6 @@
 {
   "name": "@dicsussion/protocol",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": true,
   "description": "Headless, local-first, zero-knowledge P2P messaging protocol engine and SDK",
   "type": "module",

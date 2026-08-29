@@ -53,8 +53,10 @@ Their inbox stays empty.
 
 That is deliberate. A completed handshake proves the far side holds the
 secret behind the `did:key` it claimed, and anyone can generate a fresh
-keypair, so a stranger's handshake looks exactly like a friend's.
-Pairing happens out of band and is the only thing separating them.
+keypair, so a stranger's handshake looks exactly like a friend's. An
+explicit decision to pair is the only thing separating them, and it
+stays with a person — a peer can send you their ticket (see below), but
+never pair themselves.
 
 > **Pair in both directions. Dial in one.**
 

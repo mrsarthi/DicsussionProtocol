@@ -139,11 +139,18 @@ It must fire once when the connection ends, from either side, and fire
 immediately if attached to one that has already closed. Presence built on
 connection events alone would otherwise switch on and never off.
 
-**Stream types now run `0x01`–`0x09`**, having gained ephemeral signals,
-peer profiles and blob transfer. If your transport enumerates them,
-derive the list from `StreamType` rather than writing it out: a
-hand-maintained one silently stops covering a stream the day another is
-added, and the failure appears only at runtime, on the first send.
+**Stream types now run `0x01`–`0x0A`**, having gained ephemeral
+signals, peer profiles, blob transfer and pairing requests. If your
+transport enumerates them, derive the list from `StreamType` rather than
+writing it out: a hand-maintained one silently stops covering a stream
+the day another is added, and the failure appears only at runtime, on the
+first send.
+
+**`0x0A` is the one stream an unpaired peer may use** (RFC 001 §6.4). A
+transport does not treat it specially — the gate lives above, in the
+session layer — but a relay or bridge operator should know that a single
+frame of it early in a connection marks a social tie forming, and between
+which two identities. The contents are sealed; that fact is not.
 
 ---
 

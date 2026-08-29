@@ -86,8 +86,13 @@ Your send resolves cleanly. Their inbox stays empty.
 That is deliberate. Completing a handshake proves only that the far side
 holds the secret behind the `did:key` it asserted, and anyone can
 generate a fresh keypair. A stranger's handshake is indistinguishable
-from a friend's, so pairing happens out of band and is the only thing
-that separates them.
+from a friend's, so an explicit decision to pair is the only thing that
+separates them.
+
+That decision stays with a person. What changed in 0.7.3 is only how the
+material reaches them — a peer can now send their own ticket rather than
+a human copying it (see below) — not that anyone is paired without
+someone choosing to.
 
 The consequence is a rule with two halves:
 
@@ -142,7 +147,7 @@ they arrived.
 
 ### Knocking, so nobody has to paste a ticket
 
-Pasting is not a UX choice — until 0.8.0 it was the only way. The
+Pasting is not a UX choice — until 0.7.3 it was the only way. The
 handshake proves a `did:key` and carries nothing else: not the peer's
 encryption key, which is derived under a separate label and cannot be
 computed from the identifier, and not their addresses. So a node that

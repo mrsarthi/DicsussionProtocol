@@ -1141,18 +1141,17 @@ longer optional for anything touching the wire.
 
 | | |
 |---|---|
-| Version | **0.7.2**, both packages |
+| Version | **0.7.3**, both packages |
 | Tests | **638 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |
 | Proving key | real ceremony output, 6 contributors + beacon |
 | License | Apache 2.0 |
-| Published | 0.7.1 on npm; **0.7.2 pending** |
+| Published | 0.7.2 on npm; **0.7.3 pending** |
 | Docs | `HOW_TO_USE.md` + a README on each package |
 
-**Test suites:** 11 e2e, 14 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT, plus
-the SDK bridge suite.
+**Test suites:** 13 e2e, 16 SDK, 15 transport, 7 CRDT, 5 storage, 3 ZK, 2 WoT.
 
 Verified from a clean install off the registry, not from the repo: consumer
 typecheck with `skipLibCheck: false`, the factory path delivering a message
@@ -1163,8 +1162,9 @@ two-peer harness passing 3/3 over real QUIC.
 
 ## Next Immediate Step
 
-Nothing blocks the consuming app. The protocol side of its mobile gate is
-finished and published.
+Nothing blocks the consuming app. Pairing no longer requires anyone to
+copy a ticket by hand, which was the last place the protocol forced a
+workaround on the app.
 
 1. Relay transport encryption — the only open item that is a security hole
    rather than an unbuilt feature, and the smallest of the serious ones.
