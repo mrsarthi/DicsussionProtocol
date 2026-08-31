@@ -80,6 +80,45 @@ to content neither of them holds. A malformed value MUST be read as no
 attachments rather than raising: one bad row must not make a conversation
 unreadable.
 
+#### Reactions
+
+A reaction is a mutable, withdrawable mark by one person on one message.
+It MUST NOT be represented as a message: reacting, withdrawing and
+reacting again would append three permanent entries for one gesture, and
+every implementation would then have to know to hide them from the
+conversation. It MUST NOT be ephemeral either — a reaction remains true
+after both parties disconnect and MUST reach a replica that was offline
+when it was made.
+
+Reactions are stored at the **top level** of the document under a
+`reaction:` prefix, one key per (message, author) pair:
+
+    "reaction:[\"msg-uuid-1\",\"did:key:z6Mk...\"]": {
+      "messageId": "msg-uuid-1",
+      "authorDid": "did:key:z6Mk...",
+      "emoji": "👍",
+      "updatedAt": 1785148200
+    }
+
+One key per pair is what makes reacting a replacement rather than an
+append, and means only the author ever writes a given key.
+
+They are **not** collected into a nested map. A nested map must be
+created before its first entry, and two replicas creating it
+concurrently produce conflicting assignments of the whole map — one
+survives and the other replica's reaction is lost. Two people reacting to
+the same message at once is ordinary traffic, not an edge case. Placing
+the map in genesis would also resolve it and would change the genesis
+bytes, so replicas on either side of that change would mint different
+genesis for the same `doc_id` and fail to merge at all (§3.2).
+
+Withdrawal MUST store an empty `emoji` rather than deleting the key. A
+delete racing a set resolves by actor order and can resurrect a
+withdrawn reaction; an empty value cannot. The key space is bounded by
+messages × participants either way.
+
+`updatedAt` is the author's clock and is for display ordering only.
+
 ---
 
 ### 3.2 Deterministic Genesis

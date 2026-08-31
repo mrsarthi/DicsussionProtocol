@@ -556,6 +556,48 @@ Messages sent while a peer is unreachable are queued and flushed on
 reconnect. A resolved `sendMessage` means *accepted locally*, not
 *delivered* — see section 3 for why those differ more than usual here.
 
+### Reacting to a message
+
+```ts
+client.chat.react('general', message.id, '👍');
+client.chat.unreact('general', message.id);
+
+client.chat.getReactions('general', message.id);
+// → [{ emoji: '👍', count: 3, reactors: ['did:key:z…'], mine: true }]
+
+client.chat.onReaction('general', ({ messageId, emoji, removed }) => {
+  // redraw that message's reaction row
+});
+```
+
+**One reaction per person per message.** Reacting again replaces the
+previous one, so a user who taps 👍 then ❤️ then 😂 has left one mark.
+That is the behaviour people expect, and it is why a reaction is not a
+message: as messages, those three taps would be three permanent entries
+in the conversation, and every client would need to know to hide them.
+
+Nor is it an ephemeral signal like typing. A reaction is still true
+tomorrow, has to survive a restart, and has to reach someone who was
+offline when it was made. So it lives in the conversation document and
+travels the same way history does — including to group members the
+reactor has no direct connection to.
+
+`onReaction` fires for your own as well as other people's, so a view can
+be drawn from one path rather than updating locally and again on sync.
+
+The emoji is a short opaque string. The SDK checks its length, not
+whether it is really an emoji — which sequences count changes with every
+Unicode release, and your app may want something that is not one at all.
+
+> **The same trust model as messages.** A reaction is a claim by the
+> `did:key` in its slot, carried in the conversation document like the
+> messages around it. Replicated changes are not individually
+> authenticated (RFC 002), so a participant able to forge a message in a
+> document could forge a reaction there too. Reactions are neither
+> stronger nor weaker than the conversation holding them.
+
+---
+
 ### Replying to a message
 
 ```ts

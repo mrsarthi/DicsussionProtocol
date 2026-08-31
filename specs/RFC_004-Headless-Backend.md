@@ -377,8 +377,42 @@ export class ChatService {
   ): () => void {
     return () => {};
   }
+
+  /**
+   * Set or replace this identity's reaction to a message.
+   *
+   * One per person per message (RFC 002 §3.1), so reacting again
+   * replaces rather than accumulates.
+   */
+  react(channelId: string, messageId: string, emoji: string): void {}
+
+  /** Withdraw it. Doing so when there is none MUST NOT raise. */
+  unreact(channelId: string, messageId: string): void {}
+
+  /** Reactions to one message, grouped for display. */
+  getReactions(channelId: string, messageId: string): ReactionSummary[] {
+    return [];
+  }
+
+  onReaction(
+    channelId: string,
+    callback: (event: ReactionEvent) => void,
+  ): () => void {
+    return () => {};
+  }
 }
 ```
+
+An implementation MUST bound the length of a reaction, and SHOULD NOT
+attempt to validate that it is an emoji: which sequences qualify changes
+with each Unicode revision, and an application may legitimately want
+something that is not one.
+
+`getReactions` SHOULD return groups in a deterministic order — by count,
+then by the reaction itself — so the same set renders identically across
+devices. `onReaction` SHOULD fire for the local identity's own reactions
+as well as remote ones, so a view can be rendered from a single path
+rather than updated once locally and again on synchronisation.
 
 `SendMessageOptions.attachments` carries `BlobRef` handles (RFC 001
 §6.3). Only the handles travel with the message; an implementation MUST

@@ -92,6 +92,7 @@ export type { DepartureRecord } from './membership-departure.js';
 export type {
   CanonicalDocState,
   ChatMessage,
+  ChatReaction,
   DocumentMeta,
   DocumentSchema,
   LensOperation,

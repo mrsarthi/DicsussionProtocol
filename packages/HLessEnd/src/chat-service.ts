@@ -15,6 +15,8 @@ import { Emitter } from '@dicsussion/core/transport';
 import type { DocumentManager } from '@dicsussion/core/crdt';
 import type { BlobRef } from './blob-service.js';
 import type { MessagePayload } from './message-codec.js';
+import type { ReactionEvent, ReactionSummary } from './types.js';
+import { MAX_REACTION_LENGTH } from './types.js';
 import type { OutboxManager } from './outbox.js';
 import { currentEpoch } from './outbox.js';
 import type { WireProof } from './proof-service.js';
@@ -92,6 +94,16 @@ export class ChatService {
   static readonly MAX_LISTENERS_PER_CHANNEL = MAX_LISTENERS_PER_CHANNEL;
 
   private readonly emitter = new Emitter<Record<string, [SdkChatMessage]>>();
+  /**
+   * Reactions ride their own emitter rather than sharing the message
+   * one. A single emitter carrying both would type every handler as a
+   * union, so each listener would have to narrow a shape it already
+   * knows — the listener-count cap applies to messages, and reactions
+   * are not messages.
+   */
+  private readonly reactionEmitter = new Emitter<
+    Record<string, [ReactionEvent]>
+  >();
   private readonly listenerCounts = new Map<string, number>();
 
   /** Message ids the application has already been told about. */
@@ -107,6 +119,13 @@ export class ChatService {
    * the baseline would mark it delivered before anything delivered it.
    */
   private readonly baseline = new Map<string, Set<string>>();
+  /**
+   * Last reaction seen per slot, so a sync emits only what changed.
+   *
+   * Keyed by message and author; the value is the emoji, empty when
+   * withdrawn.
+   */
+  private readonly reactionState = new Map<string, Map<string, string>>();
 
   /** Ephemeral listeners per channel; nothing here is persisted. */
   private readonly ephemeral = new Map<
@@ -508,6 +527,159 @@ export class ChatService {
     this._emitMessage(payload.channelId, message);
 
     return message;
+  }
+
+  /**
+   * React to a message, or change an existing reaction.
+   *
+   * One reaction per person per message: reacting again replaces rather
+   * than adds, so a user who taps three things in a row leaves one mark,
+   * not three.
+   *
+   * Not a message. Carrying one as a message would append a permanent
+   * entry every time somebody tapped and untapped, and every client
+   * would need to know to hide them from the conversation. Not ephemeral
+   * either — unlike typing, a reaction is still true tomorrow and has to
+   * reach someone who was offline when it was made.
+   *
+   * @param emoji A short opaque string. The SDK does not check that it
+   *   is an emoji: which sequences count is a moving target, and an
+   *   application may reasonably want something else.
+   * @throws If the emoji exceeds `MAX_REACTION_LENGTH`.
+   */
+  react(channelId: string, messageId: string, emoji: string): void {
+    if (emoji.length === 0) {
+      throw new Error(
+        'Reaction is empty. Use unreact() to withdraw one — an empty ' +
+          'string is how a withdrawal is stored, not how it is requested.',
+      );
+    }
+    if (emoji.length > MAX_REACTION_LENGTH) {
+      throw new Error(
+        `Reaction is ${emoji.length} characters against a limit of ` +
+          `${MAX_REACTION_LENGTH}.`,
+      );
+    }
+
+    this.writeReaction(channelId, messageId, emoji);
+  }
+
+  /** Withdraw our reaction. Doing so when there is none is harmless. */
+  unreact(channelId: string, messageId: string): void {
+    this.writeReaction(channelId, messageId, '');
+  }
+
+  /**
+   * Reactions to a message, grouped for display.
+   *
+   * Ordered by how many people chose each, then by the emoji, so the
+   * same set renders the same way on every device.
+   */
+  getReactions(channelId: string, messageId: string): ReactionSummary[] {
+    const deps = this.deps;
+    if (!deps) return [];
+
+    const mine = deps.getLocalDid();
+    const byEmoji = new Map<string, string[]>();
+
+    for (const reaction of deps.documents.getReactions(channelId, messageId)) {
+      const reactors = byEmoji.get(reaction.emoji) ?? [];
+      reactors.push(reaction.authorDid);
+      byEmoji.set(reaction.emoji, reactors);
+    }
+
+    return [...byEmoji.entries()]
+      .map(([emoji, reactors]) => ({
+        emoji,
+        count: reactors.length,
+        reactors: [...reactors].sort(),
+        mine: reactors.includes(mine),
+      }))
+      .sort((a, b) => b.count - a.count || (a.emoji < b.emoji ? -1 : 1));
+  }
+
+  /**
+   * Watch reactions in a channel.
+   *
+   * Fires for our own as well as a peer's, so a view can be rendered
+   * from one path rather than updating locally and again on sync.
+   *
+   * @returns An unsubscribe function.
+   */
+  onReaction(
+    channelId: string,
+    handler: (event: ReactionEvent) => void,
+  ): () => void {
+    const name = `reaction:${channelId}`;
+    this.reactionEmitter.on(name, handler);
+    return () => this.reactionEmitter.off(name, handler);
+  }
+
+  /**
+   * Emit reactions a CRDT sync just brought in.
+   *
+   * Diffed against what was last seen rather than replayed: a sync
+   * carries the whole map, and re-emitting all of it would redraw every
+   * reaction in a conversation each time anybody tapped one.
+   */
+  emitSyncedReactions(channelId: string): void {
+    const deps = this.deps;
+    if (!deps) return;
+
+    const seen = this.reactionState.get(channelId);
+    const current = new Map<string, { emoji: string; authorDid: string }>();
+
+    for (const reaction of deps.documents.listReactions(channelId)) {
+      current.set(`${reaction.messageId}|${reaction.authorDid}`, {
+        emoji: reaction.emoji,
+        authorDid: reaction.authorDid,
+      });
+    }
+
+    // First sight records without emitting, exactly as message history
+    // does — otherwise a restart replays every reaction ever made.
+    if (!seen) {
+      this.reactionState.set(
+        channelId,
+        new Map([...current].map(([k, v]) => [k, v.emoji])),
+      );
+      return;
+    }
+
+    for (const [key, value] of current) {
+      if (seen.get(key) === value.emoji) continue;
+
+      seen.set(key, value.emoji);
+      const [messageId] = key.split('|');
+
+      this.reactionEmitter.emit(`reaction:${channelId}`, {
+        channelId,
+        messageId: messageId ?? '',
+        authorDid: value.authorDid,
+        emoji: value.emoji,
+        removed: value.emoji === '',
+      } satisfies ReactionEvent);
+    }
+  }
+
+  /** Write our own slot and push the change onward. */
+  private writeReaction(
+    channelId: string,
+    messageId: string,
+    emoji: string,
+  ): void {
+    const deps = this.requireDeps();
+
+    if (!deps.documents.hasDocument(channelId)) {
+      throw new Error(
+        `Unknown conversation ${channelId}. React to a message in a ` +
+          'channel this device holds.',
+      );
+    }
+
+    deps.documents.setReaction(channelId, messageId, deps.getLocalDid(), emoji);
+    this.scheduleSync(deps, channelId);
+    this.emitSyncedReactions(channelId);
   }
 
   /**

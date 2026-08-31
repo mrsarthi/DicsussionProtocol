@@ -199,6 +199,35 @@ export interface SdkChatMessage {
   readonly zkProof?: string;
 }
 
+/**
+ * Longest reaction accepted, in UTF-16 code units.
+ *
+ * Generous, because a single emoji is often several code points — skin
+ * tones and ZWJ sequences run long — and short enough that a reaction
+ * cannot become a message in disguise.
+ */
+export const MAX_REACTION_LENGTH = 32;
+
+/** Reactions to one message, grouped by what people chose. */
+export interface ReactionSummary {
+  readonly emoji: string;
+  readonly count: number;
+  /** Who reacted, sorted, so the same set renders identically. */
+  readonly reactors: readonly string[];
+  /** Whether this device's identity is among them. */
+  readonly mine: boolean;
+}
+
+/** A reaction was added, changed, or withdrawn. */
+export interface ReactionEvent {
+  readonly channelId: string;
+  readonly messageId: string;
+  readonly authorDid: string;
+  /** Empty when withdrawn; `removed` says so without a string compare. */
+  readonly emoji: string;
+  readonly removed: boolean;
+}
+
 /** Group information. */
 export interface GroupInfo {
   readonly groupId: string;

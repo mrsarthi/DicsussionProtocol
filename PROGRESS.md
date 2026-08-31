@@ -1236,12 +1236,69 @@ with three nodes where the sender and recipient never connect.
 
 ---
 
+## Task: reactions
+
+The app asked whether the SDK was ours to extend. It is, and reactions
+genuinely could not be built above it: `SendMessageOptions` has no
+metadata field, and a marker inside `content` is the shape rejected twice
+already — for profiles and for replies.
+
+### Not a message, not a signal
+A reaction is mutable, withdrawable, and one-per-person-per-message. As a
+message, tapping 👍 then ❤️ then 😂 would leave three permanent entries
+for one gesture, and every client would have to know to hide them from
+the conversation. As an ephemeral signal it would vanish on restart and
+never reach anyone who was offline.
+
+So it lives in the conversation document: one slot per (message, author),
+which makes reacting a replacement rather than an append and means only
+the author ever writes a given slot. Syncing, group relay and offline
+convergence all come free from the existing `0x01` path — no new stream,
+no wire format.
+
+### The bug the obvious design has
+First attempt used a nested `reactions` map. The test where two people
+react to the same message failed: Bob saw one reaction, not two.
+
+Two replicas creating the map for the first time produce conflicting
+assignments of the **whole map**. Automerge keeps one and the other
+person's reaction is gone. Two people reacting at once is ordinary
+traffic.
+
+Putting `reactions: {}` in the deterministic genesis fixes it and
+**changes the genesis bytes**, so a node on 0.8.0 and one on the next
+version would mint different genesis for the same channel and fail to
+merge at all — the duplicate-seq failure this project has already been
+bitten by once.
+
+Reactions are therefore stored at the top level under a `reaction:`
+prefix, one key per pair. Concurrent writers touch different keys, and
+nothing about genesis moves. Costs a prefix scan; breaks nothing.
+
+Withdrawal stores an empty string rather than deleting the key: a delete
+racing a set resolves by actor order and can resurrect a reaction
+somebody removed. The key space is bounded by messages × participants
+either way.
+
+### Checked, not assumed
+Nothing else iterates the document's top-level keys — `stripUndefined`
+works on a message, and the schema lens walks only paths a lens targets.
+Verified rather than reasoned about, since adding keys to the root would
+otherwise be exactly the kind of thing that surfaces somewhere unrelated.
+
+Emoji length is capped; whether it *is* an emoji is not checked, because
+which sequences qualify moves with every Unicode release and an app may
+want something else. There is a test with a ZWJ-plus-skin-tone sequence,
+which is long enough that a cap set by eye would reject it.
+
+---
+
 ## Current State (2026-08-25)
 
 | | |
 |---|---|
 | Version | **0.8.0**, both packages |
-| Tests | **663 passing, 0 failing** |
+| Tests | **681 passing, 0 failing** |
 | Typecheck | clean |
 | Build | clean |
 | `npm audit` (as a consumer) | 0 vulnerabilities |

@@ -228,6 +228,36 @@ answer something from before you joined. Resolve against `getHistory()`
 and decide what to show when it is absent; a dangling reference is not
 an error.
 
+## Reactions
+
+```ts
+client.chat.react(channelId, messageId, '👍');   // set, or replace
+client.chat.unreact(channelId, messageId);       // withdraw
+
+client.chat.getReactions(channelId, messageId);
+// → [{ emoji: '👍', count: 3, reactors: [...], mine: true }]
+
+client.chat.onReaction(channelId, ({ messageId, authorDid, emoji, removed }) => {});
+```
+
+**One per person per message.** Reacting again replaces, so somebody who
+taps three things in a row leaves one mark rather than three.
+
+Not a message: carrying one as a message would append a permanent entry
+every time somebody tapped and untapped, and every client would have to
+know to hide them from the conversation. Not ephemeral either — unlike
+typing, a reaction is still true tomorrow and has to reach someone who
+was offline when it was made. It lives in the conversation document, so
+it syncs, survives a restart, and reaches a group through the same relay
+path as messages.
+
+`emoji` is a short opaque string. The SDK does not check that it is an
+emoji — which sequences count is a moving target, and an application may
+want something else — only that it is at most `MAX_REACTION_LENGTH`.
+
+`getReactions` returns groups ordered by count then emoji, so the same
+set renders identically on every device, and `mine` saves comparing DIDs.
+
 ## Names and pictures
 
 What a peer calls themselves, kept as one current value rather than a
@@ -391,6 +421,10 @@ client.chat.onMessage(channelId, (message) => {})   // message.replyTo
 await client.chat.sendEphemeral(channelId, payload)
 client.chat.onEphemeral(channelId, (fromDid, payload) => {})
 await client.chat.getHistory(channelId)
+client.chat.react(channelId, messageId, emoji)
+client.chat.unreact(channelId, messageId)
+client.chat.getReactions(channelId, messageId)
+client.chat.onReaction(channelId, (event) => {})
 
 await client.blobs.put(bytes, mime)      // → BlobRef
 await client.blobs.get(ref)              // → Uint8Array

@@ -30,7 +30,7 @@ function localActor(): string {
 }
 import { v4 as uuidv4 } from 'uuid';
 
-import type { ChatMessage, DocumentMeta, DocumentSchema } from './types.js';
+import type { ChatMessage, ChatReaction, DocumentMeta, DocumentSchema } from './types.js';
 
 /** Snapshot policy: create snapshot every N changes. */
 const SNAPSHOT_CHANGE_THRESHOLD = 1000;
@@ -304,6 +304,57 @@ export class DocumentManager {
   }
 
   /**
+   * Set, replace, or withdraw one person's reaction to one message.
+   *
+   * The slot is keyed by message and author together, so reacting twice
+   * replaces rather than accumulates, and only the author ever writes
+   * their own slot.
+   *
+   * Withdrawing stores an empty string rather than deleting the key. A
+   * delete racing a set resolves by actor order, which can resurrect a
+   * reaction somebody removed; an empty value cannot. The map is bounded
+   * by messages × participants either way.
+   *
+   * @param emoji Short opaque string, or empty to withdraw.
+   */
+  setReaction(
+    docId: string,
+    messageId: string,
+    authorDid: string,
+    emoji: string,
+    updatedAt: number = Math.floor(Date.now() / 1000),
+  ): Uint8Array {
+    return this.applyChange(docId, (doc) => {
+      doc[reactionKey(messageId, authorDid)] = {
+        messageId,
+        authorDid,
+        emoji,
+        updatedAt,
+      } satisfies ChatReaction;
+    });
+  }
+
+  /** Every live reaction to one message, withdrawals omitted. */
+  getReactions(docId: string, messageId: string): ChatReaction[] {
+    return this.listReactions(docId).filter(
+      (reaction) => reaction.messageId === messageId && reaction.emoji !== '',
+    );
+  }
+
+  /** Every reaction in a document, withdrawals included. */
+  listReactions(docId: string): ChatReaction[] {
+    const doc = this.getDocument(docId);
+    if (!doc) return [];
+
+    const out: ChatReaction[] = [];
+    for (const [key, value] of Object.entries(doc)) {
+      if (key.startsWith(REACTION_PREFIX)) out.push(value as ChatReaction);
+    }
+
+    return out;
+  }
+
+  /**
    * Apply remote binary changes received from a peer.
    *
    * @param docId The document UUID.
@@ -519,6 +570,25 @@ function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
  * the object at all. Returns a plain copy — the input is never mutated,
  * because callers reuse their payload after the write.
  */
+/** Marks a top-level key as a reaction rather than schema. */
+const REACTION_PREFIX = 'reaction:';
+
+/**
+ * One slot per person per message, at the top level of the document.
+ *
+ * Top level rather than nested, so two replicas reacting at once write
+ * different keys instead of both creating the same parent map — see
+ * `DocumentSchema`.
+ *
+ * A JSON pair rather than a delimiter, so no combination of message id
+ * and did can collide into another pair's key. A separator would have to
+ * be a character neither input can contain, and "should not contain" is
+ * not the same guarantee.
+ */
+function reactionKey(messageId: string, authorDid: string): string {
+  return REACTION_PREFIX + JSON.stringify([messageId, authorDid]);
+}
+
 function stripUndefined<T extends Record<string, unknown>>(value: T): T {
   const out: Record<string, unknown> = {};
 

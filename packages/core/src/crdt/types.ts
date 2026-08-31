@@ -56,6 +56,29 @@ export interface ChatMessage {
   [key: string]: unknown;
 }
 
+/**
+ * One person's reaction to one message.
+ *
+ * Keyed in the document by message and author together, so each person
+ * holds exactly one slot per message. That is what makes reacting a
+ * *replacement* rather than an append: changing 👍 to ❤️ overwrites,
+ * and removing sets `emoji` empty rather than deleting, so the slot's
+ * history stays a single value instead of a list of every reaction
+ * anyone ever tapped.
+ *
+ * Only the author writes their own slot, so two replicas never contend
+ * for the same one.
+ */
+export interface ChatReaction {
+  messageId: string;
+  authorDid: string;
+  /** Short opaque string. Empty means the reaction was withdrawn. */
+  emoji: string;
+  /** Author's clock, for display ordering only. */
+  updatedAt: number;
+  [key: string]: unknown;
+}
+
 /** Schema structure for a chat room CRDT document (RFC 002 §3.1). */
 export interface DocumentSchema {
   $schema: string;
@@ -79,6 +102,21 @@ export interface DocumentSchema {
    * A document with no entries is shared with nobody.
    */
   participants: Record<string, ParticipantRecord>;
+  /**
+   * Reactions live at the top level under a `reaction:` prefix, one key
+   * per (message, author) pair — not in a nested map.
+   *
+   * A nested map has to be created before the first reaction can go in
+   * it, and two replicas creating it at the same moment produce
+   * conflicting assignments of the whole map: Automerge keeps one, and
+   * the other person's reaction disappears. Two people reacting to the
+   * same message at once is not an edge case.
+   *
+   * Putting it in the deterministic genesis would also fix that, and
+   * would change the genesis bytes — so a node on the older version and
+   * one on the newer would mint different genesis for the same channel
+   * and fail to merge at all. A prefix costs a scan and breaks nothing.
+   */
   [key: string]: unknown;
 }
 

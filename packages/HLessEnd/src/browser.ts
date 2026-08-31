@@ -75,6 +75,8 @@ export type {
   NetworkStatus,
   PeerConnectedEvent,
   PeerDisconnectedEvent,
+  ReactionEvent,
+  ReactionSummary,
   SdkChatMessage,
   SendMessageOptions,
 } from './types.js';
@@ -92,6 +94,7 @@ export {
   DEFAULT_MAX_AGE_S,
   MAX_SEALED_BYTES,
 } from './sealed-message.js';
+export { MAX_REACTION_LENGTH } from './types.js';
 export type { PairingRequest } from './pairing-request.js';
 export {
   MAX_REQUEST_BYTES,

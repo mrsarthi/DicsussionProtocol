@@ -364,6 +364,12 @@ bob.onPeerDisconnected.on('peer', ({ peerDid }) => { /* the dot goes out */ });
 await alice.identity.setMyProfile({ displayName: 'Alice' });
 bob.identity.onPeerProfile((did, profile) => { /* redraw */ });
 
+// Reacting is one mark per person per message — tapping again replaces
+// it, so the conversation does not grow by three when someone changes
+// their mind twice.
+alice.chat.react('general', question.id, '👍');
+bob.chat.getReactions('general', question.id);   // → grouped for display
+
 // Files travel outside the message, which carries only a hash. Bytes
 // move when a recipient asks, so an attachment nobody opens never sends.
 const ref = await alice.blobs.put(photo, 'image/png');

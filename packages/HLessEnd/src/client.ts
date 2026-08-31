@@ -1175,6 +1175,10 @@ export class DicsussionClient {
       // The handler is synchronous by contract, so this cannot be
       // awaited; a failure to emit must not disturb the sync loop.
       void this.chat.emitSynced(update.docId).catch(() => {});
+
+      // Reactions arrive in the same document but are not messages, so
+      // the message diff will never surface them.
+      this.chat.emitSyncedReactions(update.docId);
     });
   }
 
