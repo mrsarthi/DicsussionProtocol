@@ -24,6 +24,7 @@ import type { IdentityService, LocalIdentity } from './identity-service.js';
 import type { OutboxManager } from './outbox.js';
 import { DocumentStore } from './storage/document-store.js';
 import { MessageStore } from './storage/message-store.js';
+import { SecretBox } from './storage/secret-box.js';
 import { SQLiteDriver } from './storage/sqlite-driver.js';
 import type { IStorageDriver } from './storage/types.js';
 
@@ -37,6 +38,13 @@ export interface StorageLayer {
    * path for every runtime, webviews included.
    */
   readonly driver: IStorageDriver;
+  /**
+   * Encryption at rest, shared by every store.
+   *
+   * Handed out so services created later — profiles, blobs — seal with
+   * the same key rather than each deciding for itself.
+   */
+  readonly box: SecretBox;
   readonly documents: DocumentStore;
   readonly messages: MessageStore;
 }
@@ -108,6 +116,7 @@ export async function initStorage(
   storagePath: string,
   outbox: OutboxManager,
   injectedDriver?: IStorageDriver,
+  storageKey?: Uint8Array | string,
 ): Promise<StorageLayer> {
   // `SQLiteDriver` is mapped out of browser bundles (package.json
   // `browser` field), so in a webview this is undefined rather than a
@@ -124,12 +133,18 @@ export async function initStorage(
   const driver = injectedDriver ?? new SQLiteDriver(storagePath);
   await driver.initialize();
 
-  outbox.attachStorage(driver);
+  const box = new SecretBox(storageKey ?? null);
 
+  outbox.attachStorage(driver, box);
+
+  // One box for every store, from the same key that protects identity
+  // secrets. A `storageKey` that protects the keys and leaves the
+  // messages beside them readable would be a strange kind of protection.
   return {
     driver,
-    documents: new DocumentStore(driver),
-    messages: new MessageStore(driver),
+    box,
+    documents: new DocumentStore(driver, box),
+    messages: new MessageStore(driver, box),
   };
 }
 

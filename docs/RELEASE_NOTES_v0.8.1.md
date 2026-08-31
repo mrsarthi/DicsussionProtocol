@@ -4,14 +4,16 @@ Paste the body below into the release form. Tag `v0.8.1` on the head of `main`.
 
 ---
 
-**Release title:** `v0.8.1 — reactions`
+**Release title:** `v0.8.1 — reactions, and the database stops leaking`
 
 ---
 
 ## Body
 
-Adds reactions. Additive: nothing in 0.8.0 changes behaviour, no wire
-format moves, and `^0.8.0` picks this up without a manifest edit.
+Adds reactions, and closes the last outstanding security finding:
+**message content is now encrypted at rest**. Additive — nothing in
+0.8.0 changes behaviour, no wire format moves, and `^0.8.0` picks this up
+without a manifest edit.
 
 ```bash
 npm install @dicsussion/sdk@0.8.1
@@ -91,10 +93,50 @@ not individually authenticated, so a reaction is exactly as trustworthy
 as the messages around it — neither more nor less. Worth not presenting
 one as verified attribution.
 
+### Encryption at rest
+
+`storageKey` has protected identity secrets since 0.3.x and left
+everything else in plaintext — so the material the key existed to guard
+sat beside readable copies of the messages it guarded. That is closed.
+
+Sealed with the same key, in every place user content rests:
+
+| | Why it counts |
+| :--- | :--- |
+| Message bodies | The obvious one |
+| **CRDT snapshots** | Contain every message; sealing rows alone protects nothing |
+| **The outbox** | A queued message is a message, and an offline device is exactly the one with a full outbox |
+| Blob bytes | A photo on disk is the content, not a reference to it |
+| Profile names, bios, avatars | A contact list with faces attached |
+
+Snapshots and blobs are sealed as **bytes** rather than base64 through
+the string path, which would add a third to values already measured in
+megabytes.
+
+**Upgrading is a rewrite, not a migration.** Values without an at-rest
+tag are returned unchanged, so a database written before this still
+opens and new writes are sealed. There is a test for exactly that.
+
+**Without `storageKey` nothing is encrypted**, which is what an
+unconfigured key has always meant; `allowUnencryptedStorage: true` is how
+a caller says they accept it. A test asserts the content *is* readable in
+that case, so the trade-off stays visible rather than being assumed away.
+
+What this protects against is a database file read at rest — a stolen
+laptop, a backup, another app on the device. Not an attacker who already
+holds the key, or who can read the process's memory while the client
+runs.
+
 ### Verification
 
-681 tests passing, 0 failing. Typecheck, build and `npm audit` clean.
+687 tests passing, 0 failing. Typecheck, build and `npm audit` clean.
 Checked from freshly-packed tarballs.
+
+The at-rest tests read the **raw bytes of the database file** and search
+for the content. Asserting through the SDK would prove only that a round
+trip works, which it would even if nothing were encrypted — and that
+test is what caught the outbox still holding plaintext after everything
+else had been sealed.
 
 Nothing else iterates the document's top level — confirmed rather than
 assumed, since adding keys to the root is exactly the kind of change that
@@ -105,7 +147,6 @@ surfaces somewhere unrelated.
 - No relay server ships; an envelope survives storage, nothing to store
   it in comes with the SDK
 - The WebSocket relay does not encrypt CRDT traffic
-- Message content is not encrypted at rest
 - Forward secrecy is per-session for live traffic, and absent for sealed
   messages
 - One device per identity

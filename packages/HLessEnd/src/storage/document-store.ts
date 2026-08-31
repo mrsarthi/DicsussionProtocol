@@ -18,6 +18,7 @@
 import type { DocumentManager } from '@dicsussion/core/crdt';
 
 import { StorageCollections } from './types.js';
+import { SecretBox } from './secret-box.js';
 import type { IStorageDriver } from './types.js';
 import { WriteQueue } from './write-queue.js';
 
@@ -37,7 +38,15 @@ export interface StoredDocument {
 export class DocumentStore {
   private readonly writes = new WriteQueue();
 
-  constructor(private readonly storage: IStorageDriver) {}
+  /**
+   * @param box Encryption at rest. A snapshot contains every message in
+   *   the conversation, so sealing message rows and leaving snapshots in
+   *   the clear would protect nothing — the same content is in both.
+   */
+  constructor(
+    private readonly storage: IStorageDriver,
+    private readonly box: SecretBox = new SecretBox(null),
+  ) {}
 
   /**
    * Write (or replace) a document snapshot.
@@ -55,9 +64,9 @@ export class DocumentStore {
   ): void {
     const record = {
       doc_id: docId,
-      // Copied: the caller may reuse or detach its buffer before the
-      // queued write actually runs.
-      snapshot: new Uint8Array(snapshot),
+      // Copied before sealing: the caller may reuse or detach its
+      // buffer before the queued write actually runs.
+      snapshot: this.box.sealBytes(new Uint8Array(snapshot)),
       head_hash: [...heads].sort().join(','),
       message_count: messageCount,
       updated_at: Math.floor(Date.now() / 1000),
@@ -74,7 +83,7 @@ export class DocumentStore {
 
     const row = await this.storage.get(StorageCollections.CRDT_DOCUMENTS, docId);
 
-    return row ? toStoredDocument(row) : undefined;
+    return row ? toStoredDocument(row, this.box) : undefined;
   }
 
   /** Load every persisted document, newest first. */
@@ -83,7 +92,9 @@ export class DocumentStore {
 
     const rows = await this.storage.query(StorageCollections.CRDT_DOCUMENTS);
 
-    return rows.map(toStoredDocument).sort((a, b) => b.updatedAt - a.updatedAt);
+    return rows
+      .map((row) => toStoredDocument(row, this.box))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   /** List persisted document ids. */
@@ -159,10 +170,13 @@ export class DocumentStore {
   }
 }
 
-function toStoredDocument(row: Record<string, unknown>): StoredDocument {
+function toStoredDocument(
+  row: Record<string, unknown>,
+  box: SecretBox,
+): StoredDocument {
   return {
     docId: String(row['doc_id']),
-    snapshot: row['snapshot'] as Uint8Array,
+    snapshot: box.openBytes(row['snapshot'] as Uint8Array),
     headHash: String(row['head_hash'] ?? ''),
     messageCount: Number(row['message_count'] ?? 0),
     updatedAt: Number(row['updated_at'] ?? 0),

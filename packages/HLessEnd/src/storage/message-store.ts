@@ -10,6 +10,7 @@
  */
 
 import type { SdkChatMessage } from '../types.js';
+import { SecretBox } from './secret-box.js';
 import type { IStorageDriver } from './types.js';
 import { StorageCollections } from './types.js';
 
@@ -17,7 +18,16 @@ import { StorageCollections } from './types.js';
  * Persists messages and their owning channel rows.
  */
 export class MessageStore {
-  constructor(private readonly storage: IStorageDriver) {}
+  /**
+   * @param box Encryption at rest. Message bodies are the whole point of
+   *   the database to anyone who steals it, so they are sealed with the
+   *   same key as identity secrets. A pass-through box leaves them
+   *   readable, which is what an unconfigured `storageKey` means.
+   */
+  constructor(
+    private readonly storage: IStorageDriver,
+    private readonly box: SecretBox = new SecretBox(null),
+  ) {}
 
   /**
    * Write a message, creating its channel row first.
@@ -43,7 +53,7 @@ export class MessageStore {
         channel_id: message.channelId,
         author_did: message.authorDid ?? null,
         nullifier_hash: message.nullifierHash ?? null,
-        content: message.content,
+        content: this.box.seal(message.content),
         timestamp: message.timestamp,
         epoch: message.proofEpoch,
         verified_tier: message.verifiedTier,
@@ -67,10 +77,17 @@ export class MessageStore {
     channelId: string,
     limit?: number,
   ): Promise<Record<string, unknown>[]> {
-    return this.storage.query(
+    const rows = await this.storage.query(
       StorageCollections.MESSAGE_STREAM,
       { channel_id: channelId },
       limit,
     );
+
+    // Opened on the way out rather than by every caller, so a reader
+    // cannot forget and surface ciphertext as though it were a message.
+    return rows.map((row) => ({
+      ...row,
+      content: this.box.open(String(row['content'] ?? '')),
+    }));
   }
 }

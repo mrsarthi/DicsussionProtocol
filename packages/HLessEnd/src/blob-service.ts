@@ -34,6 +34,7 @@
 
 import { sha256 } from '@noble/hashes/sha2.js';
 
+import { SecretBox } from './storage/secret-box.js';
 import type { IStorageDriver } from './storage/types.js';
 import { StorageCollections } from './storage/types.js';
 
@@ -65,6 +66,9 @@ export const BLOB_CHUNK_BYTES = 256 * 1024;
  * "slow" from "never coming".
  */
 export const DEFAULT_STALL_TIMEOUT_MS = 30_000;
+
+/** Used when no box is supplied, so reads and writes stay symmetric. */
+const passThrough = new SecretBox(null);
 
 /** A handle to blob content, safe to put in a message. */
 export interface BlobRef {
@@ -129,6 +133,14 @@ export interface BlobServiceDeps {
   readonly sendTo: (peerDid: string, payload: Uint8Array) => Promise<boolean>;
   /** Paired peers with a live connection, in no particular order. */
   readonly reachablePeers: () => readonly string[];
+  /**
+   * Encryption at rest for stored bytes.
+   *
+   * A photograph on disk is the content, not a reference to it. Sealing
+   * message bodies while leaving the pictures beside them readable would
+   * protect the caption and not the picture.
+   */
+  readonly box?: SecretBox;
   /**
    * How long to wait on a silent peer before trying another.
    *
@@ -481,8 +493,9 @@ export class BlobService {
       mime: ref.mime,
       size: ref.size,
       received,
-      // Copied: the caller may reuse its buffer after we return.
-      bytes: new Uint8Array(bytes),
+      // Copied before sealing: the caller may reuse its buffer after we
+      // return.
+      bytes: (this.deps.box ?? passThrough).sealBytes(new Uint8Array(bytes)),
       created_at: Math.floor(Date.now() / 1000),
     });
   }
@@ -494,7 +507,9 @@ export class BlobService {
     if (!row) return undefined;
 
     return {
-      bytes: row['bytes'] as Uint8Array,
+      bytes: (this.deps.box ?? passThrough).openBytes(
+        row['bytes'] as Uint8Array,
+      ),
       size: row['size'] as number,
       received: row['received'] as number,
       mime: row['mime'] as string,

@@ -499,10 +499,31 @@ const client = await DicsussionClient.init(
 );
 ```
 
-`storageKey` is **required whenever `storagePath` names a real file** —
-without it, secret key material sits on disk in plaintext and the SDK
-warns on every start. Its provenance is yours to decide: an OS keychain,
-a user passphrase, a hardware token.
+`storageKey` is **required whenever `storagePath` names a real file**.
+Without it everything is written in the clear and the SDK warns on every
+start. Its provenance is yours to decide: an OS keychain, a user
+passphrase, a hardware token.
+
+It seals more than the keys. **Everything a stolen file would otherwise
+give away** is encrypted with it:
+
+- message bodies, and the CRDT snapshots that contain every one of them
+- the outbox — a queued message is a message, and a device offline long
+  enough to matter is exactly the one with a full outbox
+- attachment bytes; a photo on disk is the content, not a reference to it
+- profile names, bios and pictures — a contact list with faces attached
+- the identity secrets, as before
+
+What it protects against is a database file read at rest: a stolen
+laptop, a backup, another app on the device. Not an attacker who already
+has the key, or who can read this process's memory while you are running.
+
+> **Upgrading an existing file is not the same as starting a sealed
+> one.** Supplying a key to a database written before 0.8.1 seals new
+> writes and leaves the plaintext already in the file — in freed pages
+> and in SQLite's write-ahead log — until those are reused. If it holds
+> real messages, start a fresh file rather than assuming a key
+> retroactively protects them.
 
 ### Webview host — Tauri, React Native, Electron
 

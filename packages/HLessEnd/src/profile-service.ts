@@ -27,6 +27,7 @@
  *   is the one shown.
  */
 
+import { SecretBox } from './storage/secret-box.js';
 import type { IStorageDriver, PeerProfileRecord } from './storage/types.js';
 import { StorageCollections } from './storage/types.js';
 
@@ -39,6 +40,9 @@ import { StorageCollections } from './storage/types.js';
  * does not get to write a 12MB row into our database.
  */
 export const MAX_AVATAR_BYTES = 256 * 1024;
+
+/** Used when no box is supplied, so reads and writes stay symmetric. */
+const passThrough = new SecretBox(null);
 
 /** Longest display name accepted, in UTF-16 code units. */
 export const MAX_DISPLAY_NAME_LENGTH = 128;
@@ -84,6 +88,14 @@ export interface ProfileServiceDeps {
   readonly selfDid: string;
   /** Send our profile to every paired, connected peer. */
   readonly broadcast: (encoded: Uint8Array) => Promise<number>;
+  /**
+   * Encryption at rest.
+   *
+   * A profile table is a contact list with faces attached: who this
+   * person talks to, and what they look like. Worth as much to whoever
+   * steals the database as the messages are.
+   */
+  readonly box?: SecretBox;
 }
 
 type ProfileListener = (did: string, profile: PeerProfile) => void;
@@ -102,8 +114,10 @@ export class ProfileService {
   async load(): Promise<void> {
     const rows = await this.deps.storage.query(StorageCollections.PEER_PROFILES);
 
+    const box = this.deps.box ?? passThrough;
+
     for (const row of rows) {
-      const record = rowToRecord(row);
+      const record = rowToRecord(row, box);
       const profile = recordToProfile(record);
 
       if (record.did === this.deps.selfDid) this.mine = profile;
@@ -191,13 +205,18 @@ export class ProfileService {
   }
 
   private async persist(did: string, profile: PeerProfile): Promise<void> {
+    const box = this.deps.box ?? passThrough;
+
     await this.deps.storage.put(StorageCollections.PEER_PROFILES, did, {
       did,
-      display_name: profile.displayName ?? null,
-      bio: profile.bio ?? null,
+      display_name: profile.displayName ? box.seal(profile.displayName) : null,
+      bio: profile.bio ? box.seal(profile.bio) : null,
       avatar_mime: profile.avatar?.mime ?? null,
-      // Copied: the caller may reuse its buffer after we return.
-      avatar: profile.avatar ? new Uint8Array(profile.avatar.bytes) : null,
+      // Copied before sealing: the caller may reuse its buffer after we
+      // return.
+      avatar: profile.avatar
+        ? box.sealBytes(new Uint8Array(profile.avatar.bytes))
+        : null,
       updated_at: profile.updatedAt,
     });
   }
@@ -314,13 +333,20 @@ export function decodeProfile(bytes: Uint8Array): PeerProfile {
   };
 }
 
-function rowToRecord(row: Record<string, unknown>): PeerProfileRecord {
+function rowToRecord(
+  row: Record<string, unknown>,
+  box: SecretBox,
+): PeerProfileRecord {
+  const name = row['display_name'] as string | null;
+  const bio = row['bio'] as string | null;
+  const avatar = row['avatar'] as Uint8Array | null;
+
   return {
     did: row['did'] as string,
-    displayName: (row['display_name'] as string | null) ?? undefined,
-    bio: (row['bio'] as string | null) ?? undefined,
+    displayName: name ? box.open(name) : undefined,
+    bio: bio ? box.open(bio) : undefined,
     avatarMime: (row['avatar_mime'] as string | null) ?? undefined,
-    avatar: (row['avatar'] as Uint8Array | null) ?? undefined,
+    avatar: avatar ? box.openBytes(avatar) : undefined,
     updatedAt: row['updated_at'] as number,
   };
 }

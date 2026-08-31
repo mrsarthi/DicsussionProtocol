@@ -40,8 +40,8 @@
 >   committed to the membership tree. Blocked in code rather than silently
 >   trusted — do not enable tiers without changing the circuit.
 >
-> Beyond those three: chat content at rest is unencrypted, though identity
-> secrets are not. Forward secrecy is per-session rather than per-message. One
+> Beyond those three: forward secrecy is per-session rather than per-message,
+> and absent entirely for a message sealed for an offline peer. One
 > device per identity. No relay server ships, so there is no offline delivery
 > to a sleeping phone. No external security audit has been performed — two
 > internal audits and their outcomes are recorded in `PROGRESS.md`.

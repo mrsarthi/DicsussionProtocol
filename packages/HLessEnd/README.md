@@ -381,8 +381,19 @@ await DicsussionClient.init(
 );
 ```
 
-`storageKey` is required whenever `storagePath` names a real file —
-without it, secret key material sits on disk in plaintext.
+`storageKey` is required whenever `storagePath` names a real file. It
+seals **everything** on disk: message bodies, the CRDT snapshots that
+contain them, the outbox, attachment bytes, and profile names, bios and
+pictures — as well as the secret key material. Without it, all of that
+is written in the clear, which is what `allowUnencryptedStorage: true`
+exists to acknowledge.
+
+It protects a database file read at rest — a stolen laptop, a backup,
+another app on the device. Not an attacker who already holds the key.
+
+Supplying a key to a database written **before 0.8.1** upgrades new
+writes but does not erase the plaintext already in the file. If it holds
+real messages, start a fresh one.
 
 **Webview host.** `better-sqlite3` cannot load in a webview and a
 webview cannot open a QUIC socket, so supply both seams:

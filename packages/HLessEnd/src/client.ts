@@ -47,6 +47,7 @@ import {
   MAX_REQUEST_NAME_LENGTH,
 } from './pairing-request.js';
 import { PeerRegistry } from './peer-registry.js';
+import { SecretBox } from './storage/secret-box.js';
 import { open as openSealed, seal } from './sealed-message.js';
 import { ProfileService } from './profile-service.js';
 import type { MessagePayload } from './message-codec.js';
@@ -205,6 +206,8 @@ export class DicsussionClient {
   private storage: IStorageDriver | null = null;
   private documentStore: DocumentStore | null = null;
   private messageStore: MessageStore | null = null;
+  /** Encryption at rest, shared by every store and service. */
+  private storageBox: SecretBox | null = null;
   private profiles: ProfileService | null = null;
   /**
    * Knocks received this session, newest per peer.
@@ -1072,7 +1075,9 @@ export class DicsussionClient {
       this.config.storagePath,
       this.outbox,
       this.runtime.storage,
+      this.config.storageKey.length > 0 ? this.config.storageKey : undefined,
     );
+    this.storageBox = storage.box;
     this.storage = storage.driver;
     this.documentStore = storage.documents;
     this.messageStore = storage.messages;
@@ -1091,6 +1096,7 @@ export class DicsussionClient {
       storage: this.storage,
       selfDid: this.requireIdentity().did,
       broadcast: (encoded) => this.sessions.publishProfile(encoded),
+      box: this.storageBox ?? undefined,
     });
     this.identity.attachProfiles(this.profiles);
     await this.profiles.load();
@@ -1103,6 +1109,7 @@ export class DicsussionClient {
       // source for it, and the original sender may well be offline.
       reachablePeers: () =>
         this.peers.listPairedConnected().map((peer) => peer.did),
+      box: this.storageBox ?? undefined,
     });
 
     // Voluntary revocation is applied locally and never gossiped: a

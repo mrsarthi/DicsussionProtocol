@@ -10,6 +10,7 @@
  * time connectivity returns and would be rejected by the peer.
  */
 
+import { SecretBox } from './storage/secret-box.js';
 import type { IStorageDriver, OutboxEntry } from './storage/types.js';
 import { StorageCollections } from './storage/types.js';
 
@@ -39,8 +40,12 @@ export class OutboxManager {
   }
 
   /** Attach a storage driver so the queue survives restarts. */
-  attachStorage(storage: IStorageDriver): void {
+  /** Encryption at rest; a pass-through box until one is attached. */
+  private box = new SecretBox(null);
+
+  attachStorage(storage: IStorageDriver, box?: SecretBox): void {
     this.storage = storage;
+    if (box) this.box = box;
   }
 
   /**
@@ -144,7 +149,7 @@ export class OutboxManager {
     let restored = 0;
 
     for (const row of rows) {
-      const entry = rowToEntry(row);
+      const entry = rowToEntry(row, this.box);
       if (!entry || this.entries.size >= this.maxSize) continue;
       this.entries.set(entry.id, entry);
       restored++;
@@ -189,7 +194,11 @@ export class OutboxManager {
       await this.storage.put(StorageCollections.OUTBOX, entry.id, {
         id: entry.id,
         channel_id: entry.channelId,
-        content: entry.content,
+        // A queued message is a message. Sealing what has been sent
+        // and leaving what is waiting to be sent in the clear would
+        // protect the wrong half — and a device that is offline long
+        // enough to matter is exactly the one with a full outbox.
+        content: this.box.seal(entry.content),
         created_at: entry.createdAt,
         status: entry.status,
         proof_epoch: entry.proofEpoch ?? null,
@@ -207,7 +216,10 @@ export function currentEpoch(nowMs: number = Date.now()): number {
 }
 
 /** Convert a SQLite row back into an OutboxEntry, or null if malformed. */
-function rowToEntry(row: Record<string, unknown>): OutboxEntry | null {
+function rowToEntry(
+  row: Record<string, unknown>,
+  box: SecretBox,
+): OutboxEntry | null {
   const id = row['id'];
   const channelId = row['channel_id'];
   const content = row['content'];
@@ -229,7 +241,7 @@ function rowToEntry(row: Record<string, unknown>): OutboxEntry | null {
   return {
     id,
     channelId,
-    content,
+    content: box.open(content),
     createdAt,
     status: isOutboxStatus(status) ? status : 'pending',
     proofEpoch: typeof proofEpoch === 'number' ? proofEpoch : undefined,

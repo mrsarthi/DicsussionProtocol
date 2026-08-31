@@ -44,6 +44,22 @@ const SECRET_BOX_PREFIX_V2 = 'v2';
 /** Salt length for Argon2id, in bytes. */
 const SALT_BYTES = 16;
 
+/** AES-256-GCM nonce length, in bytes. */
+const NONCE_BYTES = 12;
+
+/**
+ * Leading byte marking binary content as sealed.
+ *
+ * Chosen from the 0xD0 range because Automerge snapshots begin with
+ * their own magic (`0x85 0x6f 0x4a 0x83`) and no common media type
+ * starts here — so an unencrypted value written before this existed is
+ * not mistaken for a sealed one.
+ */
+const BYTES_TAG_V1 = 0xd1;
+
+/** As `BYTES_TAG_V1`, for values stretched from a passphrase. */
+const BYTES_TAG_V2 = 0xd2;
+
 /**
  * Argon2id cost parameters: OWASP's `t=2, m=19 MiB, p=1` profile.
  *
@@ -180,6 +196,103 @@ export class SecretBox {
       bytesToBase64(nonce),
       bytesToBase64(ciphertext),
     ].join(':');
+  }
+
+  /**
+   * Encrypt binary content for storage.
+   *
+   * Automerge snapshots and blob bytes are not strings and must not be
+   * round-tripped through one: base64 would add a third to every
+   * snapshot and every stored attachment, on a value already measured in
+   * megabytes.
+   *
+   * The output carries a one-byte tag so an encrypted blob is
+   * self-describing, exactly as the string form's `v1:` prefix is, and a
+   * database written before encryption was enabled still opens.
+   *
+   * A passphrase is stretched per distinct salt and the salt travels
+   * with the value, so the Argon2id cost is paid once rather than per
+   * row.
+   */
+  sealBytes(plaintext: Uint8Array): Uint8Array {
+    if (!this.passphrase && !this.key) {
+      this.warnUnencrypted();
+      return plaintext;
+    }
+
+    if (this.passphrase) {
+      const { key, salt } = this.passphraseKey();
+      const { ciphertext, nonce } = encrypt(plaintext, key);
+      const out = new Uint8Array(1 + salt.length + nonce.length + ciphertext.length);
+
+      out[0] = BYTES_TAG_V2;
+      out.set(salt, 1);
+      out.set(nonce, 1 + salt.length);
+      out.set(ciphertext, 1 + salt.length + nonce.length);
+
+      return out;
+    }
+
+    const { ciphertext, nonce } = encrypt(plaintext, this.key!);
+    const out = new Uint8Array(1 + nonce.length + ciphertext.length);
+
+    out[0] = BYTES_TAG_V1;
+    out.set(nonce, 1);
+    out.set(ciphertext, 1 + nonce.length);
+
+    return out;
+  }
+
+  /**
+   * Decrypt binary content.
+   *
+   * Untagged input is returned unchanged, so rows written before
+   * encryption was enabled still load and upgrading is a rewrite rather
+   * than a migration that can fail halfway.
+   *
+   * @throws If the value is encrypted but the key is wrong or absent.
+   */
+  openBytes(stored: Uint8Array): Uint8Array {
+    if (!SecretBox.isSealedBytes(stored)) return stored;
+
+    if (!this.key && !this.passphrase) {
+      throw new Error(
+        'This database holds encrypted content but no storage key was supplied',
+      );
+    }
+
+    if (stored[0] === BYTES_TAG_V2) {
+      const salt = stored.subarray(1, 1 + SALT_BYTES);
+      const nonce = stored.subarray(1 + SALT_BYTES, 1 + SALT_BYTES + NONCE_BYTES);
+      const ciphertext = stored.subarray(1 + SALT_BYTES + NONCE_BYTES);
+
+      return decrypt(ciphertext, nonce, this.passphraseKey(salt).key);
+    }
+
+    return decrypt(
+      stored.subarray(1 + NONCE_BYTES),
+      stored.subarray(1, 1 + NONCE_BYTES),
+      this.key!,
+    );
+  }
+
+  /**
+   * Whether binary content carries an at-rest tag.
+   *
+   * An Automerge snapshot begins with its own magic bytes and a blob
+   * with whatever the file starts with, so a leading tag byte plus a
+   * plausible length is what distinguishes a sealed value from a
+   * plaintext one.
+   */
+  static isSealedBytes(value: Uint8Array): boolean {
+    if (value.length === 0) return false;
+
+    if (value[0] === BYTES_TAG_V1) return value.length > 1 + NONCE_BYTES;
+    if (value[0] === BYTES_TAG_V2) {
+      return value.length > 1 + SALT_BYTES + NONCE_BYTES;
+    }
+
+    return false;
   }
 
   /**
