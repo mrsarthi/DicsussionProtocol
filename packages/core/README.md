@@ -153,6 +153,15 @@ session layer — but a relay or bridge operator should know that a single
 frame of it early in a connection marks a social tie forming, and between
 which two identities. The contents are sealed; that fact is not.
 
+**Reactions are top-level keys in a channel document**, prefixed
+`reaction:`, one per (message, author) pair — not a nested map, and not
+in genesis. A nested map would be created by whichever replica reacts
+first, and two doing so at once conflict over the whole map, losing one
+person's reaction. Putting it in genesis would change the genesis bytes
+and stop replicas on either side of that change merging at all. If you
+read a document's root, expect those keys and ignore what you do not
+recognise.
+
 **`0x0B` carries messages sealed to a recipient's long-term key** (RFC
 001 §6.5), which is what lets one be stored for a peer who is offline. A
 transport moves it like anything else. Worth knowing if you are building

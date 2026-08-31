@@ -24,6 +24,7 @@ scan reveals. Every ❌ below names the specific dependency that blocks it.
 | Blob transfer (0x09) | ✅ | ✅ | ✅ |
 | Pairing requests (0x0A) | ✅ | ✅ | ✅ |
 | Sealed messages (0x0B) | ✅ | ✅ | ✅ |
+| Reactions (in-document) | ✅ | ✅ | ✅ |
 | mDNS discovery | ✅ | ⚠️ | ❌ |
 
 **Browsers are supported.** Import from `@dicsussion/sdk/browser`, supply
