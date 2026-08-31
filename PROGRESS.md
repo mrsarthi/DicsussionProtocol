@@ -1316,20 +1316,103 @@ two-peer harness passing 3/3 over real QUIC.
 
 ---
 
-## Next Immediate Step
+## Remaining Protocol Work (as of 0.8.1)
 
-Nothing blocks the consuming app. Pairing no longer requires anyone to
-copy a ticket by hand, which was the last place the protocol forced a
-workaround on the app.
+Nothing here blocks the consuming app. Every feature it has asked for is
+built and published; what follows is the protocol's own outstanding list,
+ordered by how much it matters rather than by effort.
 
-1. Relay transport encryption — the only open item that is a security hole
-   rather than an unbuilt feature, and the smallest of the serious ones.
-   Now specified: RFC 001 §4.3 states what a relayed transport exposes,
-   which is the requirement this would satisfy.
-2. A relay server. The SDK speaks the protocol and no reference
-   implementation exists, which is the widest gap between the architecture
-   documents and what is actually running.
-3. Typecheck `tests/`.
+### 1. Relay transport encryption — the only open security hole
+
+`WebSocketConnection` stores `sessionKey` and never uses it. A stream is
+protected only if something above the transport already sealed it, so
+`0x01` (CRDT sync — **message history and membership**), `0x03`, `0x04`,
+`0x05` and `0x06` cross a relay in the clear. Its operator can
+reconstruct the membership graph and read history.
+
+**Browser only.** Iroh/QUIC has no readable intermediary, so Node,
+desktop and mobile are unaffected.
+
+*Why it is still open:* it needs framing, nonce management and replay
+protection done properly, and a rushed version is worse than a documented
+gap. `SECURITY_BACKLOG.md` §6 has the detail.
+
+*Newly relevant:* a relay is being built on AWS. **A mailbox holding
+`0x0B` envelopes is not affected by this** — those are sealed to their
+recipient before they reach any transport, so an operator sees opaque
+bytes. Only a *transport* relay carrying live traffic has this problem,
+and offline delivery does not need one. Whoever picks this up should read
+`agent-context/PROJECT_KNOWLEDGE.md` §7.1 before assuming the two are the
+same component.
+
+### 2. A relay server, and what it must decide
+
+The SDK speaks the protocol; no reference implementation ships. This is
+the widest gap between the architecture documents and what actually runs.
+
+Two decisions are already forced and are not the SDK's to make:
+
+- **Addressing.** A `0x0B` envelope names nobody — deliberately — so a
+  mailbox cannot work out who to hand it to. Routing on the recipient's
+  `did:key` hands the operator the social graph, which is the thing
+  sealing was for. A per-recipient random mailbox id, exchanged when
+  peers pair and unlinkable to any identity, does not.
+- **Retention.** `MAX_SEALED_BYTES` (256KB) and `DEFAULT_MAX_AGE_S`
+  (7 days) are exported so a store and the SDK agree. Expiring at the
+  latter means nothing is held past the point the SDK would refuse it.
+
+### 3. Forward secrecy for stored messages
+
+A sealed message is encrypted to a key that does not rotate: if it leaks,
+every retained envelope opens, including old ones. Live `0x02` traffic is
+unaffected.
+
+The remedy is X3DH one-time prekeys. **Deliberately deferred, and not
+for effort** — a prekey batch needs somewhere to be published and a way
+to be refilled when exhausted, and neither exists while no relay ships.
+Building the harder half of X3DH against undecided infrastructure would
+mean redoing it. This unblocks once §2 exists.
+
+### 4. Cross-version wire behaviour is not tested
+
+`HandshakeInit.subStreams` fixed a hang where a newer responder waits
+forever for a stream an older initiator never opens. The count invariants
+are tested and `LEGACY_SUB_STREAM_COUNT` is guarded, but **no test runs a
+real pre-`subStreams` peer against a current one** — that would mean
+reimplementing the dialer's handshake.
+
+### 5. Encryption at rest does not reach backwards
+
+Closed in 0.8.1 for new writes. A database written earlier keeps its
+plaintext in freed pages and in the WAL until those are reused. Supplying
+a key upgrades new writes, not old bytes. Documented; an app with real
+history should start a fresh file. A `VACUUM`-and-rewrite upgrade path
+would close it properly and does not exist.
+
+### 6. Smaller, and genuinely optional
+
+- **Typecheck `tests/`.** They compile under Playwright but are not part
+  of the workspace typecheck.
+- **OS-keychain integration** (RFC 004 §4.1) — explicitly deferred to
+  v1.1; `storageKey` with at-rest encryption is sufficient for v1, and
+  the key's provenance is the application's concern by design.
+- **Native prover (rapidsnark)** — WASM proving is ~1s per anonymous
+  message.
+- **Per-message ratchet** — forward secrecy is per-session.
+- **Multi-device** — one device per identity. Recovery works; sync does
+  not exist.
+- **ZK proving is Node-only** — artifacts load from the filesystem, so
+  `resolveArtifacts()` returns `null` in a webview.
+- **`BridgePipe` confidentiality** is the host's responsibility, and the
+  contract should say so as plainly as the ordering rule does.
+
+### Not on this list, on purpose
+
+**Tier gating.** `userScore` is a self-asserted private input held in
+check by application code on both sides. **Do not enable tiers without
+binding it in the circuit**, or quotas become forgeable 100×. This is not
+pending work; it is a thing that must not be done until the circuit
+changes.
 
 ### Deferred (non-blocking)
 - [x] Message content encrypted at rest — **done in 0.8.1**. Covers
@@ -1341,12 +1424,8 @@ workaround on the app.
       Not covered: a database written *before* 0.8.1 keeps plaintext in
       freed pages until they are reused. Supplying a key upgrades new
       writes, not old bytes.
-- [ ] OS-keychain integration for identity secrets (RFC 004 §4.1) — explicitly
-      deferred to v1.1; SQLite with encryption at rest is sufficient for v1
-- [ ] Native prover (rapidsnark) — WASM proving is ~1s per anonymous message
-- [ ] Relay server implementation — the SDK speaks the protocol; no reference
-      server ships yet
-- [ ] Per-message ratchet — forward secrecy is currently per-session
+- [ ] Everything else — see **Remaining Protocol Work** above, which
+      supersedes the list that used to sit here.
 - [ ] Tier gating — `userScore` is a self-asserted private input, held in check
       by application code on both sides. **Do not enable tiers without binding
       it in the circuit**, or quotas become forgeable 100×.
